@@ -20,21 +20,22 @@ class V1Admin(commands.Cog):
         description="Abre um painel organizado com as informações do servidor.",
     )
     async def server(self, interaction: discord.Interaction) -> None:
+        # Acknowledge immediately so a slow Discord/member lookup cannot make
+        # the interaction expire with "This interaction failed".
+        await interaction.response.defer()
+
         guild = interaction.guild
         if guild is None:
-            await interaction.response.send_message(
-                "Este comando só pode ser usado em um servidor.",
-                ephemeral=True,
+            await interaction.edit_original_response(
+                content="Este comando só pode ser usado em um servidor."
             )
             return
 
-        try:
-            members = [member async for member in guild.fetch_members(limit=None)]
-        except (discord.Forbidden, discord.HTTPException, discord.ClientException):
-            members = list(guild.members)
-
-        humans = sum(not member.bot for member in members)
-        bots = sum(member.bot for member in members)
+        total_members = guild.member_count or len(guild.members)
+        cached_members = list(guild.members)
+        humans = sum(1 for member in cached_members if not member.bot)
+        bots = sum(1 for member in cached_members if member.bot)
+        cached_total = humans + bots
 
         categories = len(guild.categories)
         text_channels = len(guild.text_channels)
@@ -45,6 +46,20 @@ class V1Admin(commands.Cog):
             text_channels + voice_channels + forum_channels + stage_channels
         )
         roles = max(0, len(guild.roles) - 1)
+
+        if cached_total != total_members and total_members > 0:
+            community = (
+                f"👤 Pessoas **{humans}**\n"
+                f"🤖 Bots **{bots}**\n"
+                f"📊 Total **{total_members}**\n"
+                "*Pessoas/bots exibidos a partir do cache disponível.*"
+            )
+        else:
+            community = (
+                f"👤 Pessoas **{humans}**\n"
+                f"🤖 Bots **{bots}**\n"
+                f"📊 Total **{total_members}**"
+            )
 
         owner = guild.owner.mention if guild.owner else "Indisponível"
         created = int(guild.created_at.replace(tzinfo=timezone.utc).timestamp())
@@ -64,15 +79,7 @@ class V1Admin(commands.Cog):
         elif self.bot.user:
             embed.set_thumbnail(url=self.bot.user.display_avatar.url)
 
-        embed.add_field(
-            name="👥 Comunidade",
-            value=(
-                f"👤 Pessoas **{humans}**\n"
-                f"🤖 Bots **{bots}**\n"
-                f"📊 Total **{humans + bots}**"
-            ),
-            inline=True,
-        )
+        embed.add_field(name="👥 Comunidade", value=community, inline=True)
         embed.add_field(
             name="💬 Canais",
             value=(
@@ -113,7 +120,7 @@ class V1Admin(commands.Cog):
             )
 
         embed.set_footer(text="Aqui Jas • painel do servidor")
-        await interaction.response.send_message(embed=embed)
+        await interaction.edit_original_response(content=None, embed=embed)
 
     @app_commands.command(
         name="ajuda",
@@ -171,8 +178,6 @@ class V1Admin(commands.Cog):
 
 
 async def setup(bot: commands.Bot) -> None:
-    dev_guild_id = getattr(getattr(bot, "settings", None), "dev_guild_id", None)
-    if dev_guild_id:
-        await bot.add_cog(V1Admin(bot), guild=discord.Object(id=dev_guild_id))
-    else:
-        await bot.add_cog(V1Admin(bot))
+    # Keep every command global. Guild-specific registration caused the
+    # duplicate slash-command entries seen during development.
+    await bot.add_cog(V1Admin(bot))
