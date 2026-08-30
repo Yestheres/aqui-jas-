@@ -15,9 +15,10 @@ log = logging.getLogger(__name__)
 
 class AquiJas(commands.Bot):
     def __init__(self, settings: Settings) -> None:
+        # V1 only needs guild-level intents. Member lookups use Discord's
+        # fetch_member endpoint instead of requiring the privileged intent.
         intents = discord.Intents.default()
         intents.guilds = True
-        intents.members = True
         super().__init__(command_prefix=commands.when_mentioned, intents=intents, help_command=None)
         self.settings = settings
         self.db = Database(settings.database_path)
@@ -25,7 +26,12 @@ class AquiJas(commands.Bot):
 
     async def setup_hook(self) -> None:
         await self.db.connect()
-        for extension in ("bot.cogs.core", "bot.cogs.ai", "bot.cogs.v1_admin", "bot.cogs.agent"):
+        for extension in (
+            "bot.cogs.core",
+            "bot.cogs.ai",
+            "bot.cogs.v1_admin",
+            "bot.cogs.agent",
+        ):
             await self.load_extension(extension)
 
     async def on_ready(self) -> None:
