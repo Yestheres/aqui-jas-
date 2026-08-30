@@ -27,13 +27,8 @@ class AquiJas(commands.Bot):
 
     async def setup_hook(self) -> None:
         await self.db.connect()
-        for extension in (
-            "bot.cogs.core",
-            "bot.cogs.ai",
-            "bot.cogs.v1_admin",
-            "bot.cogs.agent",
-        ):
-            await self.load_extension(extension)
+        await self.load_extension("bot.cogs.core")
+        await self.load_extension("bot.cogs.v1_admin")
 
         if self.settings.dev_guild_id:
             guild = discord.Object(id=self.settings.dev_guild_id)
@@ -49,7 +44,8 @@ class AquiJas(commands.Bot):
             for guild in self.guilds:
                 self.tree.copy_global_to(guild=guild)
                 try:
-                    await self.tree.sync(guild=guild)
+                    synced = await self.tree.sync(guild=guild)
+                    log.info("Synced %d commands to guild %s", len(synced), guild.id)
                 except discord.HTTPException:
                     log.exception("Failed to sync commands to guild %s", guild.id)
             self._commands_synced = True
@@ -60,7 +56,8 @@ class AquiJas(commands.Bot):
     async def on_guild_join(self, guild: discord.Guild) -> None:
         self.tree.copy_global_to(guild=guild)
         try:
-            await self.tree.sync(guild=guild)
+            synced = await self.tree.sync(guild=guild)
+            log.info("Synced %d commands to new guild %s", len(synced), guild.id)
         except discord.HTTPException:
             log.exception("Failed to sync commands to new guild %s", guild.id)
 
