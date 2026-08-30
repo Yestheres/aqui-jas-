@@ -15,11 +15,13 @@ log = logging.getLogger(__name__)
 
 class AquiJas(commands.Bot):
     def __init__(self, settings: Settings) -> None:
-        # V1 only needs guild-level intents. Member lookups use Discord's
-        # fetch_member endpoint instead of requiring the privileged intent.
         intents = discord.Intents.default()
         intents.guilds = True
-        super().__init__(command_prefix=commands.when_mentioned, intents=intents, help_command=None)
+        super().__init__(
+            command_prefix=commands.when_mentioned,
+            intents=intents,
+            help_command=None,
+        )
         self.settings = settings
         self.db = Database(settings.database_path)
         self.tools = ToolRegistry()
