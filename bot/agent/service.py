@@ -50,7 +50,18 @@ class AgentService:
         api_key, base_url, model = config
         client = AIClient(AIConfig(api_key=api_key, base_url=base_url, model=model))
         user_prompt = build_prompt(self.guild_context(guild), request, guild.id)
-        raw = await client.chat(SYSTEM_PROMPT, user_prompt, temperature=0.1)
+
+        # AIClient.chat expects a messages array. Keep the system prompt
+        # separate from the user prompt so every OpenAI-compatible provider
+        # receives the exact same structured conversation.
+        raw = await client.chat(
+            [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.1,
+        )
+
         plan = parse_plan(raw, guild.id)
         validate_plan(plan)
         return plan
