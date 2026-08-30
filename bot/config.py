@@ -16,7 +16,7 @@ class Settings:
     dev_guilds: tuple[int, ...] = ()
     ai_api_key: str = ""
     ai_base_url: str = "https://api.openai.com/v1"
-    ai_model: str = "gpt-5-mini"
+    ai_model: str = ""
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -38,5 +38,5 @@ class Settings:
             dev_guilds=tuple(guilds),
             ai_api_key=os.getenv("AI_API_KEY", "").strip(),
             ai_base_url=os.getenv("AI_BASE_URL", "https://api.openai.com/v1").strip(),
-            ai_model=os.getenv("AI_MODEL", "gpt-5-mini").strip(),
+            ai_model=os.getenv("AI_MODEL", "").strip(),
         )
