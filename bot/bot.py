@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 
 import discord
 from discord.ext import commands
@@ -49,5 +48,4 @@ class AquiJas(commands.Bot):
 
 
 def create_bot(settings: Settings) -> AquiJas:
-    Path(settings.database_path).parent.mkdir(parents=True, exist_ok=True)
     return AquiJas(settings)
