@@ -6,7 +6,7 @@ from discord.ext import commands
 
 
 class V1Admin(commands.Cog):
-    """V1 server diagnostics and help commands."""
+    """Base server diagnostics and help commands for the pure bot."""
 
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
@@ -20,7 +20,6 @@ class V1Admin(commands.Cog):
             )
             return
 
-        ai_configured = await self.bot.db.get_ai_config(guild.id) is not None
         embed = discord.Embed(
             title=f"🏠 {guild.name}",
             description="Resumo atual do servidor.",
@@ -31,27 +30,26 @@ class V1Admin(commands.Cog):
         embed.add_field(name="Canais", value=str(len(guild.channels)), inline=True)
         embed.add_field(name="Cargos", value=str(len(guild.roles)), inline=True)
         embed.add_field(name="Categorias", value=str(len(guild.categories)), inline=True)
-        embed.add_field(name="IA", value="🟢 Configurada" if ai_configured else "⚪ Não configurada", inline=True)
         await interaction.response.send_message(embed=embed)
 
     @app_commands.command(name="ajuda", description="Mostra os recursos disponíveis do Aqui Jas.")
     async def help(self, interaction: discord.Interaction) -> None:
         embed = discord.Embed(
             title="🤖 Aqui Jas",
-            description="Central de comandos da V1",
+            description="Bot Discord modular, sem dependência de IA.",
             color=discord.Color.blurple(),
         )
         embed.add_field(
-            name="🧠 IA",
-            value="`/configia` · `/iastatus` · `/iaremover` · `/ia`",
+            name="🏠 Servidor",
+            value="`/servidor` · resumo do servidor",
             inline=False,
         )
         embed.add_field(
-            name="🏠 Servidor",
-            value="`/ping` · `/servidor`",
+            name="⚙️ Núcleo",
+            value="`/ping` · `/sobre`",
             inline=False,
         )
-        embed.set_footer(text="Arquitetura V1 em construção.")
+        embed.set_footer(text="Mais módulos podem ser adicionados sem depender de IA.")
         await interaction.response.send_message(embed=embed)
 
 
