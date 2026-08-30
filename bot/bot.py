@@ -11,8 +11,6 @@ from .config import Settings
 
 log = logging.getLogger(__name__)
 
-GITHUB_URL = "https://github.com/Yestheres/aqui-jas-"
-
 
 class AquiJas(commands.Bot):
     def __init__(self, settings: Settings) -> None:
@@ -32,27 +30,26 @@ class AquiJas(commands.Bot):
         self.started_at = datetime.now(timezone.utc)
 
     async def setup_hook(self) -> None:
+        dev_guild = (
+            discord.Object(id=self.settings.dev_guild_id)
+            if self.settings.dev_guild_id
+            else None
+        )
+
+        # Purge stale remote registrations BEFORE cogs register anything.
+        # This removes old global commands from previous versions and old
+        # guild-specific commands from development.
+        if dev_guild is not None:
+            self.tree.clear_commands(guild=None)
+            await self.tree.sync()
+            self.tree.clear_commands(guild=dev_guild)
+            await self.tree.sync(guild=dev_guild)
+
         await self.load_extension("bot.cogs.core")
         await self.load_extension("bot.cogs.v1_admin")
 
-        current_commands = list(self.tree.get_commands())
-
-        if self.settings.dev_guild_id:
-            guild = discord.Object(id=self.settings.dev_guild_id)
-
-            # Remove every old registration first. The previous AI build left
-            # stale global and guild commands, which Discord then displayed twice.
-            self.tree.clear_commands(guild=None)
-            await self.tree.sync()
-            self.tree.clear_commands(guild=guild)
-            await self.tree.sync(guild=guild)
-
-            # Register the current command objects directly in the test guild.
-            # Do NOT copy globals: that is what created the duplicate scope.
-            for command in current_commands:
-                self.tree.add_command(command, guild=guild, override=True)
-
-            synced = await self.tree.sync(guild=guild)
+        if dev_guild is not None:
+            synced = await self.tree.sync(guild=dev_guild)
             log.info(
                 "Published %d guild-only commands to DEV_GUILD_ID=%s: %s",
                 len(synced),
