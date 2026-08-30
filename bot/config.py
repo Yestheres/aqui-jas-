@@ -15,8 +15,8 @@ class Settings:
     log_level: str = "INFO"
     dev_guilds: tuple[int, ...] = ()
     ai_api_key: str = ""
-    ai_base_url: str = "https://api.openai.com/v1"
-    ai_model: str = ""
+    ai_base_url: str = "https://openrouter.ai/api/v1"
+    ai_model: str = "openrouter/free"
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -37,6 +37,6 @@ class Settings:
             log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
             dev_guilds=tuple(guilds),
             ai_api_key=os.getenv("AI_API_KEY", "").strip(),
-            ai_base_url=os.getenv("AI_BASE_URL", "https://api.openai.com/v1").strip(),
-            ai_model=os.getenv("AI_MODEL", "").strip(),
+            ai_base_url=os.getenv("AI_BASE_URL", "https://openrouter.ai/api/v1").strip(),
+            ai_model=os.getenv("AI_MODEL", "openrouter/free").strip(),
         )
