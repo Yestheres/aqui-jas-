@@ -82,4 +82,8 @@ class Core(commands.Cog):
 
 
 async def setup(bot: commands.Bot) -> None:
-    await bot.add_cog(Core(bot))
+    dev_guild_id = getattr(getattr(bot, "settings", None), "dev_guild_id", None)
+    if dev_guild_id:
+        await bot.add_cog(Core(bot), guild=discord.Object(id=dev_guild_id))
+    else:
+        await bot.add_cog(Core(bot))
