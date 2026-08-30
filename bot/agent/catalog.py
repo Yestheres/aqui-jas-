@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-# V1 deliberately excludes member moderation from the AI tool catalog.
-# Direct moderation commands can be introduced in V3 with their own policy layer.
+# V1 keeps destructive member moderation out of the AI Agent catalog.
+# Those actions can be introduced later with a dedicated moderation policy layer.
 DANGEROUS_ACTIONS = {
     "delete_channel",
     "delete_role",
     "set_channel_permissions",
-    "update_role_permissions",
-    "update_guild",
     "delete_message",
 }
 
@@ -27,16 +25,13 @@ ACTION_DESCRIPTIONS: dict[str, str] = {
     "update_channel": "Atualiza nome, tópico, slowmode ou NSFW de um canal.",
     "delete_channel": "Exclui um canal ou categoria.",
     "move_channel": "Move um canal para outra categoria.",
-    "reorder_channels": "Reordena canais por posição.",
-    "set_channel_permissions": "Altera permissões de um canal para um alvo.",
+    "set_channel_permissions": "Altera permissões de um canal para um cargo ou membro.",
     "sync_channel_permissions": "Sincroniza permissões de um canal com a categoria.",
     "create_role": "Cria um cargo.",
     "update_role": "Atualiza nome, cor ou menção de um cargo.",
     "delete_role": "Exclui um cargo.",
-    "reorder_roles": "Reordena um cargo.",
     "assign_role": "Atribui um cargo a um membro.",
     "remove_role": "Remove um cargo de um membro.",
-    "update_role_permissions": "Altera permissões de um cargo.",
     "send_message": "Envia uma mensagem em um canal.",
     "delete_message": "Apaga uma mensagem específica por ID.",
 }
