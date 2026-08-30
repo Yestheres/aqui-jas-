@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 import discord
 from discord.ext import commands
@@ -21,45 +22,50 @@ class AquiJas(commands.Bot):
             help_command=None,
         )
         self.settings = settings
-        self._commands_synced = False
 
     async def setup_hook(self) -> None:
         await self.load_extension("bot.cogs.core")
         await self.load_extension("bot.cogs.v1_admin")
 
-        # Sync globally once so commands removed from the code disappear from
-        # Discord's global registry instead of lingering indefinitely.
-        try:
+        loaded_commands = list(self.tree.get_commands())
+
+        # First clear the old global registry. This removes commands left by
+        # the former AI build, which were causing duplicate entries in Discord.
+        self.tree.clear_commands(guild=None)
+        await self.tree.sync()
+
+        # Restore the current commands locally, then publish only to the test
+        # guild for immediate availability. In production, omit DEV_GUILD_ID
+        # and the same current set will be published globally instead.
+        for command in loaded_commands:
+            self.tree.add_command(command)
+
+        if self.settings.dev_guild_id:
+            guild = discord.Object(id=self.settings.dev_guild_id)
+            self.tree.copy_global_to(guild=guild)
+            synced = await self.tree.sync(guild=guild)
+            log.info(
+                "Synced %d commands to DEV_GUILD_ID=%s",
+                len(synced),
+                self.settings.dev_guild_id,
+            )
+        else:
             synced = await self.tree.sync()
             log.info("Synced %d global commands", len(synced))
-        except discord.HTTPException:
-            log.exception("Failed to sync global commands")
-
-    async def _sync_guild_commands(self, guild: discord.Guild) -> None:
-        self.tree.copy_global_to(guild=guild)
-        synced = await self.tree.sync(guild=guild)
-        log.info("Synced %d commands to guild %s", len(synced), guild.id)
 
     async def on_ready(self) -> None:
         if self.user is None:
             return
-        if not self._commands_synced:
-            for guild in self.guilds:
-                try:
-                    await self._sync_guild_commands(guild)
-                except discord.HTTPException:
-                    log.exception("Failed to sync commands to guild %s", guild.id)
-            self._commands_synced = True
-
         log.info("Logged in as %s (%s)", self.user, self.user.id)
         log.info("Connected to %d guild(s)", len(self.guilds))
 
     async def on_guild_join(self, guild: discord.Guild) -> None:
-        try:
-            await self._sync_guild_commands(guild)
-        except discord.HTTPException:
-            log.exception("Failed to sync commands to new guild %s", guild.id)
+        if self.settings.dev_guild_id:
+            return
+        synced = await self.tree.sync(guild=guild)
+        log.info("Synced %d commands to new guild %s", len(synced), guild.id)
 
 
 def create_bot(settings: Settings) -> AquiJas:
+    Path(settings.database_path).parent.mkdir(parents=True, exist_ok=True)
     return AquiJas(settings)
