@@ -13,10 +13,9 @@ log = logging.getLogger(__name__)
 
 class AquiJas(commands.Bot):
     def __init__(self, settings: Settings) -> None:
-        # Start with NO gateway intents and explicitly request only guilds.
-        # This guarantees the bot never asks Discord for a privileged intent.
         intents = discord.Intents.none()
         intents.guilds = True
+        intents.members = True
 
         super().__init__(
             command_prefix=commands.when_mentioned,
@@ -50,7 +49,6 @@ class AquiJas(commands.Bot):
         if self.user is None:
             return
 
-        # Remove stale guild-scoped registrations left by older builds.
         if not self._legacy_commands_cleaned:
             for guild in self.guilds:
                 self.tree.clear_commands(guild=guild)
