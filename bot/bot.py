@@ -13,17 +13,16 @@ log = logging.getLogger(__name__)
 
 class AquiJas(commands.Bot):
     def __init__(self, settings: Settings) -> None:
+        # Only request the non-privileged GUILDS intent. This keeps the bot
+        # deployable without any privileged-intent switch in the Developer Portal.
         intents = discord.Intents.none()
         intents.guilds = True
-        intents.members = True
 
         super().__init__(
             command_prefix=commands.when_mentioned,
             intents=intents,
             help_command=None,
-            description=(
-                "Aqui Jas — ferramentas bonitas, simples e úteis para administrar seu servidor."
-            ),
+            description="Aqui Jas — ferramentas bonitas, simples e úteis para seu servidor.",
             status=discord.Status.online,
             activity=discord.Activity(
                 type=discord.ActivityType.watching,
@@ -32,9 +31,10 @@ class AquiJas(commands.Bot):
         )
         self.settings = settings
         self.started_at = datetime.now(timezone.utc)
-        self._legacy_commands_cleaned = False
 
     async def setup_hook(self) -> None:
+        # Keep one command scope only: global. Do not sync on every on_ready,
+        # otherwise reconnects can cause unnecessary API traffic and rate limits.
         await self.load_extension("bot.cogs.core")
         await self.load_extension("bot.cogs.v1_admin")
 
@@ -49,25 +49,6 @@ class AquiJas(commands.Bot):
         if self.user is None:
             return
 
-        if not self._legacy_commands_cleaned:
-            for guild in self.guilds:
-                self.tree.clear_commands(guild=guild)
-                try:
-                    synced = await self.tree.sync(guild=guild)
-                    log.info(
-                        "Cleared legacy guild commands for %s (%s); %d remain",
-                        guild.name,
-                        guild.id,
-                        len(synced),
-                    )
-                except discord.HTTPException:
-                    log.exception(
-                        "Failed clearing guild commands for %s (%s)",
-                        guild.name,
-                        guild.id,
-                    )
-            self._legacy_commands_cleaned = True
-
         guild_count = len(self.guilds)
         activity = discord.Activity(
             type=discord.ActivityType.watching,
@@ -80,9 +61,6 @@ class AquiJas(commands.Bot):
 
     async def on_guild_join(self, guild: discord.Guild) -> None:
         log.info("Joined guild %s (%s); commands are global", guild.name, guild.id)
-
-    async def close(self) -> None:
-        await super().close()
 
 
 def create_bot(settings: Settings) -> AquiJas:
