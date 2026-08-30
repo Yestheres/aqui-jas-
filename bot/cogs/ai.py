@@ -6,8 +6,8 @@ from discord.ext import commands
 
 from ..ai.client import AIClient, AIConfig
 
-DEFAULT_BASE_URL = "https://api.openai.com/v1"
-DEFAULT_MODEL = "gpt-5-mini"
+DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
+DEFAULT_MODEL = "openrouter/free"
 
 
 class AIConfigModal(discord.ui.Modal, title="Configurar IA do servidor"):
@@ -21,14 +21,14 @@ class AIConfigModal(discord.ui.Modal, title="Configurar IA do servidor"):
     )
     base_url = discord.ui.TextInput(
         label="URL da API (opcional)",
-        placeholder="https://api.openai.com/v1",
+        placeholder="OpenRouter: https://openrouter.ai/api/v1",
         style=discord.TextStyle.short,
         required=False,
         max_length=300,
     )
     model = discord.ui.TextInput(
         label="Modelo (opcional)",
-        placeholder="gpt-5-mini",
+        placeholder="openrouter/free",
         style=discord.TextStyle.short,
         required=False,
         max_length=150,
@@ -58,7 +58,7 @@ class AIConfigModal(discord.ui.Modal, title="Configurar IA do servidor"):
             "✅ **IA configurada para este servidor!**\n\n"
             f"• Modelo: `{discord.utils.escape_markdown(model)}`\n"
             f"• Endpoint: `{discord.utils.escape_markdown(base_url)}`\n\n"
-            "A chave foi salva na configuração deste servidor e não será exibida nas mensagens do bot.",
+            "A chave foi salva na configuração deste servidor e não será exibida pelo bot.",
             ephemeral=True,
         )
 
