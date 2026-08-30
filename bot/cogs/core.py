@@ -64,7 +64,7 @@ class Core(commands.Cog):
         embed.add_field(name="🚀 Status", value="Operacional", inline=True)
         embed.add_field(
             name="🛠️ Biblioteca padrão",
-            value="asyncio · logging · datetime · pathlib · importlib",
+            value="asyncio · logging · datetime · pathlib · importlib.metadata",
             inline=False,
         )
         embed.set_footer(text="Aqui Jas • núcleo puro Discord")
@@ -82,8 +82,4 @@ class Core(commands.Cog):
 
 
 async def setup(bot: commands.Bot) -> None:
-    dev_guild_id = getattr(getattr(bot, "settings", None), "dev_guild_id", None)
-    if dev_guild_id:
-        await bot.add_cog(Core(bot), guild=discord.Object(id=dev_guild_id))
-    else:
-        await bot.add_cog(Core(bot))
+    await bot.add_cog(Core(bot))
