@@ -32,21 +32,29 @@ class AquiJas(commands.Bot):
         await self.load_extension("bot.cogs.core")
         await self.load_extension("bot.cogs.ai")
 
-        # Global commands can take time to propagate. Development guilds are
-        # synced immediately when DEV_GUILDS is configured in the environment.
-        if self.settings.dev_guilds:
-            for guild_id in self.settings.dev_guilds:
-                guild = discord.Object(id=guild_id)
-                self.tree.copy_global_to(guild=guild)
-                await self.tree.sync(guild=guild)
-                log.info("Synced commands to development guild %s", guild_id)
-        else:
-            await self.tree.sync()
-
     async def on_ready(self) -> None:
-        if self.user is not None:
-            log.info("Logged in as %s (%s)", self.user, self.user.id)
-            log.info("Connected to %d guild(s)", len(self.guilds))
+        if self.user is None:
+            return
+
+        # Guild-scoped sync makes slash commands available immediately instead
+        # of waiting for Discord's global command propagation window.
+        for guild in self.guilds:
+            self.tree.copy_global_to(guild=guild)
+            try:
+                await self.tree.sync(guild=guild)
+            except discord.HTTPException:
+                log.exception("Failed to sync commands to guild %s", guild.id)
+
+        log.info("Logged in as %s (%s)", self.user, self.user.id)
+        log.info("Connected to %d guild(s)", len(self.guilds))
+
+    async def on_guild_join(self, guild: discord.Guild) -> None:
+        self.tree.copy_global_to(guild=guild)
+        try:
+            await self.tree.sync(guild=guild)
+            log.info("Synced commands to new guild %s", guild.id)
+        except discord.HTTPException:
+            log.exception("Failed to sync commands to new guild %s", guild.id)
 
     async def close(self) -> None:
         await self.db.close()
