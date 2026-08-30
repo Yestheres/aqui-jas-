@@ -4,13 +4,12 @@ from pathlib import Path
 
 import aiosqlite
 
-
 DEFAULT_AI_BASE_URL = "https://openrouter.ai/api/v1"
 DEFAULT_AI_MODEL = "openrouter/free"
 
 
 class Database:
-    """Small async SQLite wrapper used by the bot services."""
+    """Async SQLite wrapper for guild configuration, memory and audit."""
 
     def __init__(self, path: str) -> None:
         self.path = Path(path)
@@ -50,8 +49,6 @@ class Database:
             """
         )
         await self._db.commit()
-
-        # Upgrade databases created by the first version of Aqui Jas.
         for column, definition in (
             ("ai_api_key", "TEXT"),
             ("ai_base_url", "TEXT"),
@@ -79,52 +76,66 @@ class Database:
 
     async def ensure_guild(self, guild_id: int) -> None:
         await self.conn.execute(
-            "INSERT OR IGNORE INTO guild_config(guild_id) VALUES (?)",
-            (guild_id,),
+            "INSERT OR IGNORE INTO guild_config(guild_id) VALUES (?)", (guild_id,)
         )
         await self.conn.commit()
 
-    async def set_ai_config(
-        self,
-        guild_id: int,
-        api_key: str,
-        base_url: str,
-        model: str,
-    ) -> None:
+    async def set_ai_config(self, guild_id: int, api_key: str, base_url: str, model: str) -> None:
         await self.ensure_guild(guild_id)
         await self.conn.execute(
-            """
-            UPDATE guild_config
-            SET ai_api_key = ?, ai_base_url = ?, ai_model = ?,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE guild_id = ?
-            """,
+            "UPDATE guild_config SET ai_api_key=?, ai_base_url=?, ai_model=?, updated_at=CURRENT_TIMESTAMP WHERE guild_id=?",
             (api_key, base_url, model, guild_id),
         )
         await self.conn.commit()
 
     async def get_ai_config(self, guild_id: int) -> tuple[str, str, str] | None:
         cursor = await self.conn.execute(
-            "SELECT ai_api_key, ai_base_url, ai_model FROM guild_config WHERE guild_id = ?",
+            "SELECT ai_api_key, ai_base_url, ai_model FROM guild_config WHERE guild_id=?",
             (guild_id,),
         )
         row = await cursor.fetchone()
         await cursor.close()
         if not row or not row[0]:
             return None
-        return str(row[0]), str(row[1] or DEFAULT_AI_BASE_URL), str(
-            row[2] or DEFAULT_AI_MODEL
-        )
+        return str(row[0]), str(row[1] or DEFAULT_AI_BASE_URL), str(row[2] or DEFAULT_AI_MODEL)
 
     async def clear_ai_config(self, guild_id: int) -> None:
         await self.ensure_guild(guild_id)
         await self.conn.execute(
-            """
-            UPDATE guild_config
-            SET ai_api_key = NULL, ai_base_url = NULL, ai_model = NULL,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE guild_id = ?
-            """,
+            "UPDATE guild_config SET ai_api_key=NULL, ai_base_url=NULL, ai_model=NULL, updated_at=CURRENT_TIMESTAMP WHERE guild_id=?",
             (guild_id,),
+        )
+        await self.conn.commit()
+
+    async def add_memory(self, guild_id: int, user_id: int, role: str, content: str) -> None:
+        await self.conn.execute(
+            "INSERT INTO conversation_memory(guild_id,user_id,role,content) VALUES (?,?,?,?)",
+            (guild_id, user_id, role, content[:8000]),
+        )
+        await self.conn.execute(
+            """
+            DELETE FROM conversation_memory
+            WHERE guild_id=? AND user_id=? AND id NOT IN (
+                SELECT id FROM conversation_memory
+                WHERE guild_id=? AND user_id=? ORDER BY id DESC LIMIT 20
+            )
+            """,
+            (guild_id, user_id, guild_id, user_id),
+        )
+        await self.conn.commit()
+
+    async def get_memory(self, guild_id: int, user_id: int, limit: int = 12) -> list[tuple[str, str]]:
+        cursor = await self.conn.execute(
+            "SELECT role,content FROM conversation_memory WHERE guild_id=? AND user_id=? ORDER BY id DESC LIMIT ?",
+            (guild_id, user_id, limit),
+        )
+        rows = await cursor.fetchall()
+        await cursor.close()
+        return [(str(role), str(content)) for role, content in reversed(rows)]
+
+    async def log_action(self, guild_id: int, user_id: int, action: str, risk: str, status: str, details: str = "") -> None:
+        await self.conn.execute(
+            "INSERT INTO action_log(guild_id,user_id,action,risk,status,details) VALUES (?,?,?,?,?,?)",
+            (guild_id, user_id, action, risk, status, details[:4000]),
         )
         await self.conn.commit()
