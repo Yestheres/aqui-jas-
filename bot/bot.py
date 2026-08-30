@@ -15,7 +15,6 @@ class AquiJas(commands.Bot):
     def __init__(self, settings: Settings) -> None:
         intents = discord.Intents.default()
         intents.guilds = True
-        intents.members = True
 
         super().__init__(
             command_prefix=commands.when_mentioned,
@@ -38,9 +37,6 @@ class AquiJas(commands.Bot):
         await self.load_extension("bot.cogs.core")
         await self.load_extension("bot.cogs.v1_admin")
 
-        # The bot now uses a single application-command scope: global.
-        # Publish the current tree once; legacy guild registrations are removed
-        # separately in on_ready, avoiding duplicate command scopes.
         synced = await self.tree.sync()
         log.info(
             "Published %d global commands: %s",
@@ -66,7 +62,7 @@ class AquiJas(commands.Bot):
                     )
                 except discord.HTTPException:
                     log.exception(
-                        "Failed clearing legacy guild commands for %s (%s)",
+                        "Failed clearing guild commands for %s (%s)",
                         guild.name,
                         guild.id,
                     )
