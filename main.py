@@ -19,7 +19,7 @@ if not TOKEN:
 DATA_DIR = Path("data")
 DB_PATH = DATA_DIR / "aqui_jas.sqlite3"
 GITHUB_URL = "https://github.com/Yestheres/aqui-jas-"
-DISCORD_INVITE_RE = re.compile(
+INVITE_RE = re.compile(
     r"^(?:https?://)?(?:www\.)?(?:discord(?:app)?\.com/invite|discord\.gg)/([A-Za-z0-9-]+)(?:/)?$",
     re.IGNORECASE,
 )
@@ -70,6 +70,14 @@ def init_database() -> None:
         db.commit()
 
 
+def get_settings(guild_id: int) -> sqlite3.Row | None:
+    with db_connect() as db:
+        return db.execute(
+            "SELECT * FROM guild_settings WHERE guild_id = ?",
+            (guild_id,),
+        ).fetchone()
+
+
 def set_channel(guild_id: int, column: str, channel_id: int) -> None:
     if column not in {"partnership_channel_id", "staff_channel_id"}:
         raise ValueError("invalid settings column")
@@ -88,12 +96,19 @@ def set_channel(guild_id: int, column: str, channel_id: int) -> None:
         db.commit()
 
 
-def get_settings(guild_id: int) -> sqlite3.Row | None:
+def has_pending_request(guild_id: int, user_id: int) -> bool:
     with db_connect() as db:
-        return db.execute(
-            "SELECT * FROM guild_settings WHERE guild_id = ?",
-            (guild_id,),
-        ).fetchone()
+        return (
+            db.execute(
+                """
+                SELECT 1 FROM partnership_requests
+                WHERE guild_id = ? AND user_id = ? AND status = 'pending'
+                LIMIT 1
+                """,
+                (guild_id, user_id),
+            ).fetchone()
+            is not None
+        )
 
 
 def create_request(
@@ -126,22 +141,9 @@ def set_request_message(request_id: int, message_id: int) -> None:
         db.commit()
 
 
-def has_pending_request(guild_id: int, user_id: int) -> bool:
-    with db_connect() as db:
-        row = db.execute(
-            """
-            SELECT 1 FROM partnership_requests
-            WHERE guild_id = ? AND user_id = ? AND status = 'pending'
-            LIMIT 1
-            """,
-            (guild_id, user_id),
-        ).fetchone()
-        return row is not None
-
-
-def finish_request(request_id: int, status: str) -> sqlite3.Row | None:
+def decide_request(request_id: int, status: str) -> sqlite3.Row | None:
     if status not in {"approved", "rejected"}:
-        raise ValueError("invalid request status")
+        raise ValueError("invalid status")
     now = datetime.now(timezone.utc).isoformat()
     with db_connect() as db:
         row = db.execute(
@@ -159,9 +161,9 @@ def finish_request(request_id: int, status: str) -> sqlite3.Row | None:
 
 
 async def validate_permanent_invite(bot: discord.Client, link: str) -> tuple[bool, str]:
-    match = DISCORD_INVITE_RE.match(link.strip())
+    match = INVITE_RE.match(link.strip())
     if not match:
-        return False, "Envie um convite do Discord, como `https://discord.gg/exemplo`."
+        return False, "Use um convite do Discord, como `https://discord.gg/exemplo`."
 
     normalized = f"https://discord.gg/{match.group(1)}"
     try:
@@ -180,36 +182,39 @@ async def validate_permanent_invite(bot: discord.Client, link: str) -> tuple[boo
 
     max_age = getattr(invite, "max_age", None)
     if max_age is None:
-        return False, "Não consegui confirmar que esse convite é permanente. Gere um convite sem expiração."
+        return False, "Não consegui confirmar se o convite é permanente. Gere um convite sem expiração."
     if max_age != 0:
         return False, "O convite precisa ser permanente, sem expiração."
     if getattr(invite, "temporary", False):
-        return False, "O convite temporário não pode ser usado para parceria."
+        return False, "Convites temporários não podem ser usados em parcerias."
 
     return True, normalized
 
 
 class PartnershipDecisionView(discord.ui.View):
+    """Persistent approval buttons attached to a partnership request."""
+
     def __init__(self, bot: "AquiJas", request_id: int) -> None:
         super().__init__(timeout=None)
         self.bot = bot
         self.request_id = request_id
-        self.add_item(
-            discord.ui.Button(
-                label="Aceitar parceria",
-                style=discord.ButtonStyle.success,
-                emoji="✅",
-                custom_id=f"partnership:approve:{request_id}",
-            )
+
+        approve = discord.ui.Button(
+            label="Aceitar parceria",
+            style=discord.ButtonStyle.success,
+            emoji="✅",
+            custom_id=f"partnership:approve:{request_id}",
         )
-        self.add_item(
-            discord.ui.Button(
-                label="Recusar",
-                style=discord.ButtonStyle.danger,
-                emoji="❌",
-                custom_id=f"partnership:reject:{request_id}",
-            )
+        reject = discord.ui.Button(
+            label="Recusar",
+            style=discord.ButtonStyle.danger,
+            emoji="❌",
+            custom_id=f"partnership:reject:{request_id}",
         )
+        approve.callback = self.approve_callback
+        reject.callback = self.reject_callback
+        self.add_item(approve)
+        self.add_item(reject)
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.guild is None:
@@ -225,9 +230,14 @@ class PartnershipDecisionView(discord.ui.View):
             return False
         return True
 
+    async def approve_callback(self, interaction: discord.Interaction) -> None:
+        await self._finish(interaction, approved=True)
+
+    async def reject_callback(self, interaction: discord.Interaction) -> None:
+        await self._finish(interaction, approved=False)
+
     async def _finish(self, interaction: discord.Interaction, approved: bool) -> None:
-        status = "approved" if approved else "rejected"
-        row = finish_request(self.request_id, status)
+        row = decide_request(self.request_id, "approved" if approved else "rejected")
         if row is None:
             await interaction.response.send_message(
                 "Essa solicitação já foi decidida.", ephemeral=True
@@ -236,46 +246,75 @@ class PartnershipDecisionView(discord.ui.View):
 
         if approved:
             settings = get_settings(int(row["guild_id"]))
-            partnership_channel_id = settings["partnership_channel_id"] if settings else None
+            channel_id = settings["partnership_channel_id"] if settings else None
             destination = None
-            if partnership_channel_id:
-                destination = self.bot.get_channel(int(partnership_channel_id))
+
+            if channel_id:
+                destination = self.bot.get_channel(int(channel_id))
                 if destination is None:
                     try:
-                        destination = await self.bot.fetch_channel(int(partnership_channel_id))
+                        destination = await self.bot.fetch_channel(int(channel_id))
                     except discord.HTTPException:
                         destination = None
 
             if not isinstance(destination, discord.TextChannel):
                 await interaction.response.send_message(
-                    "Parceria aprovada, mas o canal de parceria configurado não está disponível.",
+                    "Parceria aprovada, mas o canal de parceria não está disponível.",
                     ephemeral=True,
                 )
-            else:
-                embed = discord.Embed(
-                    title="🤝 Nova parceria",
-                    description=row["description"],
-                    color=discord.Color.green(),
-                    timestamp=datetime.now(timezone.utc),
+                return
+
+            embed = discord.Embed(
+                title="🤝 Nova parceria",
+                description=row["description"],
+                color=discord.Color.green(),
+                timestamp=datetime.now(timezone.utc),
+            )
+            embed.add_field(
+                name="🔗 Convite",
+                value=f"[Entrar no servidor]({row['invite_url']})",
+                inline=False,
+            )
+            embed.set_footer(text=f"Solicitação #{row['id']}")
+
+            try:
+                await destination.send(embed=embed)
+            except discord.HTTPException:
+                await interaction.response.send_message(
+                    "A solicitação foi aprovada, mas não consegui publicar a parceria.",
+                    ephemeral=True,
                 )
-                embed.add_field(
-                    name="🔗 Convite",
-                    value=f"[Entrar no servidor]({row['invite_url']})",
-                    inline=False,
-                )
-                embed.set_footer(text=f"Solicitação #{row['id']}")
+                return
+
+            await interaction.response.send_message(
+                "✅ Parceria aprovada e publicada.", ephemeral=True
+            )
+
+            user = self.bot.get_user(int(row["user_id"]))
+            if user is None:
                 try:
-                    await destination.send(embed=embed)
-                    await interaction.response.send_message(
-                        "✅ Parceria aprovada e publicada.", ephemeral=True
+                    user = await self.bot.fetch_user(int(row["user_id"]))
+                except discord.HTTPException:
+                    user = None
+            if user is not None:
+                try:
+                    await user.send(
+                        f"✅ Sua solicitação de parceria no servidor **{interaction.guild.name}** foi aprovada."
                     )
                 except discord.HTTPException:
-                    await interaction.response.send_message(
-                        "Parceria aprovada, mas não consegui publicar no canal configurado.",
-                        ephemeral=True,
-                    )
+                    pass
         else:
-            await interaction.response.send_message("❌ Parceria recusada.", ephemeral=True)
+            await interaction.response.send_message(
+                "❌ Parceria recusada.", ephemeral=True
+            )
+            user = self.bot.get_user(int(row["user_id"]))
+            if user is not None:
+                try:
+                    await user.send(
+                        f"❌ Sua solicitação de parceria no servidor **{interaction.guild.name}** foi recusada."
+                    )
+                except discord.HTTPException:
+                    pass
 
         if interaction.message:
             current = (
@@ -286,15 +325,17 @@ class PartnershipDecisionView(discord.ui.View):
             current.color = discord.Color.green() if approved else discord.Color.red()
             current.add_field(
                 name="Resultado",
-                value=f"{'✅ Aprovada' if approved else '❌ Recusada'} por {interaction.user.mention}",
+                value=(
+                    f"✅ Aprovada por {interaction.user.mention}"
+                    if approved
+                    else f"❌ Recusada por {interaction.user.mention}"
+                ),
                 inline=False,
             )
             try:
                 await interaction.message.edit(embed=current, view=None)
             except discord.HTTPException:
-                log.exception(
-                    "Falha ao atualizar mensagem da solicitação #%s", self.request_id
-                )
+                log.exception("Falha ao atualizar solicitação #%s", self.request_id)
 
     async def on_error(
         self,
@@ -302,7 +343,7 @@ class PartnershipDecisionView(discord.ui.View):
         error: Exception,
         item: discord.ui.Item,
     ) -> None:
-        log.exception("Erro no botão da parceria #%s", self.request_id, exc_info=error)
+        log.exception("Erro no botão da solicitação #%s", self.request_id, exc_info=error)
         if not interaction.response.is_done():
             await interaction.response.send_message(
                 "❌ Ocorreu um erro ao processar essa solicitação.", ephemeral=True
@@ -325,11 +366,12 @@ class AquiJas(discord.Client):
     async def setup_hook(self) -> None:
         init_database()
         self.tree.add_command(parceria)
+
         synced = await self.tree.sync()
         log.info(
             "Sincronizados %d comandos globais: %s",
             len(synced),
-            ", ".join(c.name for c in synced),
+            ", ".join(command.name for command in synced),
         )
 
         with db_connect() as db:
@@ -342,6 +384,7 @@ class AquiJas(discord.Client):
     async def on_ready(self) -> None:
         if self.user is None:
             return
+
         if not self._legacy_guild_cleanup_done:
             for guild in self.guilds:
                 try:
@@ -374,22 +417,14 @@ class AquiJas(discord.Client):
         try:
             await message.delete()
         except discord.HTTPException:
-            log.warning("Não consegui apagar a mensagem de configuração em #%s", message.channel)
+            log.warning("Não consegui apagar a mensagem de configuração em %s", message.channel)
 
         if content == "#parceria":
             set_channel(message.guild.id, "partnership_channel_id", message.channel.id)
-            log.info(
-                "Canal de parceria definido: guild=%s channel=%s",
-                message.guild.id,
-                message.channel.id,
-            )
+            log.info("Canal de parceria definido: guild=%s channel=%s", message.guild.id, message.channel.id)
         else:
             set_channel(message.guild.id, "staff_channel_id", message.channel.id)
-            log.info(
-                "Canal staff definido: guild=%s channel=%s",
-                message.guild.id,
-                message.channel.id,
-            )
+            log.info("Canal staff definido: guild=%s channel=%s", message.guild.id, message.channel.id)
 
 
 bot = AquiJas()
@@ -459,7 +494,11 @@ async def servidor(interaction: discord.Interaction) -> None:
     embed.add_field(name="🗂️ Categorias", value=f"`{len(guild.categories)}`", inline=True)
     embed.add_field(name="🎭 Cargos", value=f"`{max(0, len(guild.roles) - 1)}`", inline=True)
     embed.add_field(name="🆔 ID", value=f"`{guild.id}`", inline=True)
-    embed.add_field(name="📅 Criado", value=f"<t:{int(guild.created_at.timestamp())}:D>", inline=True)
+    embed.add_field(
+        name="📅 Criado",
+        value=f"<t:{int(guild.created_at.timestamp())}:D>",
+        inline=True,
+    )
     await interaction.response.send_message(embed=embed)
 
 
@@ -528,7 +567,6 @@ async def parceria(
     if not valid:
         await interaction.edit_original_response(content=f"❌ {result}")
         return
-    normalized_link = result
 
     staff_channel = bot.get_channel(int(settings["staff_channel_id"]))
     if staff_channel is None:
@@ -548,7 +586,7 @@ async def parceria(
             interaction.guild.id,
             interaction.user.id,
             descricao.strip(),
-            normalized_link,
+            result,
             staff_channel.id,
         )
     except sqlite3.IntegrityError:
@@ -564,20 +602,16 @@ async def parceria(
         timestamp=datetime.now(timezone.utc),
     )
     embed.add_field(name="👤 Solicitante", value=interaction.user.mention, inline=True)
-    embed.add_field(name="🆔 ID da solicitação", value=f"`{request_id}`", inline=True)
-    embed.add_field(
-        name="🔗 Convite",
-        value=f"[Abrir convite]({normalized_link})",
-        inline=False,
-    )
-    embed.set_footer(text="Analise a solicitação antes de publicar a parceria.")
+    embed.add_field(name="🆔 Solicitação", value=f"`#{request_id}`", inline=True)
+    embed.add_field(name="🔗 Convite", value=f"[Abrir convite]({result})", inline=False)
+    embed.set_footer(text="A staff deve analisar e decidir antes da publicação.")
 
     view = PartnershipDecisionView(bot, request_id)
     try:
         staff_message = await staff_channel.send(embed=embed, view=view)
         set_request_message(request_id, staff_message.id)
     except discord.HTTPException:
-        finish_request(request_id, "rejected")
+        decide_request(request_id, "rejected")
         await interaction.edit_original_response(
             content="❌ Não consegui enviar a solicitação para o canal da staff."
         )
