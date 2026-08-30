@@ -20,7 +20,10 @@ class Database:
             CREATE TABLE IF NOT EXISTS guild_config (
                 guild_id INTEGER PRIMARY KEY,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                ai_api_key TEXT,
+                ai_base_url TEXT,
+                ai_model TEXT
             );
             CREATE TABLE IF NOT EXISTS conversation_memory (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -44,6 +47,21 @@ class Database:
         )
         await self._db.commit()
 
+        # Upgrade databases created by the first version of Aqui Jas.
+        for column, definition in (
+            ("ai_api_key", "TEXT"),
+            ("ai_base_url", "TEXT"),
+            ("ai_model", "TEXT"),
+        ):
+            try:
+                await self._db.execute(
+                    f"ALTER TABLE guild_config ADD COLUMN {column} {definition}"
+                )
+            except aiosqlite.OperationalError as exc:
+                if "duplicate column name" not in str(exc).lower():
+                    raise
+        await self._db.commit()
+
     async def close(self) -> None:
         if self._db is not None:
             await self._db.close()
@@ -58,6 +76,51 @@ class Database:
     async def ensure_guild(self, guild_id: int) -> None:
         await self.conn.execute(
             "INSERT OR IGNORE INTO guild_config(guild_id) VALUES (?)",
+            (guild_id,),
+        )
+        await self.conn.commit()
+
+    async def set_ai_config(
+        self,
+        guild_id: int,
+        api_key: str,
+        base_url: str,
+        model: str,
+    ) -> None:
+        await self.ensure_guild(guild_id)
+        await self.conn.execute(
+            """
+            UPDATE guild_config
+            SET ai_api_key = ?, ai_base_url = ?, ai_model = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE guild_id = ?
+            """,
+            (api_key, base_url, model, guild_id),
+        )
+        await self.conn.commit()
+
+    async def get_ai_config(self, guild_id: int) -> tuple[str, str, str] | None:
+        cursor = await self.conn.execute(
+            "SELECT ai_api_key, ai_base_url, ai_model FROM guild_config WHERE guild_id = ?",
+            (guild_id,),
+        )
+        row = await cursor.fetchone()
+        await cursor.close()
+        if not row or not row[0]:
+            return None
+        return str(row[0]), str(row[1] or "https://api.openai.com/v1"), str(
+            row[2] or "gpt-5-mini"
+        )
+
+    async def clear_ai_config(self, guild_id: int) -> None:
+        await self.ensure_guild(guild_id)
+        await self.conn.execute(
+            """
+            UPDATE guild_config
+            SET ai_api_key = NULL, ai_base_url = NULL, ai_model = NULL,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE guild_id = ?
+            """,
             (guild_id,),
         )
         await self.conn.commit()
