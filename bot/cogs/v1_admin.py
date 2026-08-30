@@ -167,9 +167,12 @@ class V1Admin(commands.Cog):
             )
         )
         embed.set_footer(text="Aqui Jas • /ajuda")
-
         await interaction.response.send_message(embed=embed, view=view)
 
 
 async def setup(bot: commands.Bot) -> None:
-    await bot.add_cog(V1Admin(bot))
+    dev_guild_id = getattr(getattr(bot, "settings", None), "dev_guild_id", None)
+    if dev_guild_id:
+        await bot.add_cog(V1Admin(bot), guild=discord.Object(id=dev_guild_id))
+    else:
+        await bot.add_cog(V1Admin(bot))
