@@ -28,7 +28,7 @@ def _permission_for(action: str) -> str:
         "kick_member": "kick_members",
         "ban_member": "ban_members",
         "unban_member": "ban_members",
-        "send_message": "manage_messages",
+        "send_message": "send_messages",
     }.get(action, "manage_guild")
 
 
@@ -125,12 +125,7 @@ async def execute_action(
             color = discord.Colour(int(raw_color, 16)) if raw_color else discord.Colour.default()
         except ValueError as exc:
             raise ValueError("input.color precisa ser hexadecimal, como #5865F2.") from exc
-        role = await guild.create_role(
-            name=name,
-            colour=color,
-            mentionable=bool(input_data.get("mentionable", False)),
-            reason=reason,
-        )
+        role = await guild.create_role(name=name, colour=color, mentionable=bool(input_data.get("mentionable", False)), reason=reason)
         return {"role_id": role.id, "reused": False}
 
     if action_type in {"assign_role", "remove_role"}:
