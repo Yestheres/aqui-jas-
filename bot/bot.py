@@ -32,14 +32,13 @@ class AquiJas(commands.Bot):
         )
         self.settings = settings
         self.started_at = datetime.now(timezone.utc)
-        self._guild_cleanup_done = False
+        self._legacy_commands_cleaned = False
 
     async def setup_hook(self) -> None:
-        # There is exactly one command scope now: global.
-        # Load the current Cogs and publish their commands globally.
         await self.load_extension("bot.cogs.core")
         await self.load_extension("bot.cogs.v1_admin")
 
+        # One command scope only: global. Publish the current command set once.
         synced = await self.tree.sync()
         log.info(
             "Published %d global commands: %s",
@@ -47,42 +46,36 @@ class AquiJas(commands.Bot):
             ", ".join(command.name for command in synced),
         )
 
-    async def _remove_legacy_guild_commands(self) -> None:
-        """Delete guild-specific command registrations left by older builds."""
-        if self._guild_cleanup_done:
-            return
-
-        for guild in self.guilds:
-            self.tree.clear_commands(guild=guild)
-            try:
-                synced = await self.tree.sync(guild=guild)
-                log.info(
-                    "Cleared guild-specific commands for %s (%s); %d remain",
-                    guild.name,
-                    guild.id,
-                    len(synced),
-                )
-            except discord.HTTPException:
-                log.exception(
-                    "Failed clearing guild-specific commands for %s (%s)",
-                    guild.name,
-                    guild.id,
-                )
-
-        self._guild_cleanup_done = True
-
     async def on_ready(self) -> None:
         if self.user is None:
             return
 
-        await self._remove_legacy_guild_commands()
+        # Remove stale guild-scoped registrations left by older builds.
+        if not self._legacy_commands_cleaned:
+            for guild in self.guilds:
+                self.tree.clear_commands(guild=guild)
+                try:
+                    synced = await self.tree.sync(guild=guild)
+                    log.info(
+                        "Cleared legacy guild commands for %s (%s); %d guild commands remain",
+                        guild.name,
+                        guild.id,
+                        len(synced),
+                    )
+                except discord.HTTPException:
+                    log.exception(
+                        "Failed clearing legacy guild commands for %s (%s)",
+                        guild.name,
+                        guild.id,
+                    )
+            self._legacy_commands_cleaned = True
 
         guild_count = len(self.guilds)
-        self.activity = discord.Activity(
+        activity = discord.Activity(
             type=discord.ActivityType.watching,
             name=f"/ajuda • {guild_count} servidor{'es' if guild_count != 1 else ''}",
         )
-        await self.change_presence(status=discord.Status.online, activity=self.activity)
+        await self.change_presence(status=discord.Status.online, activity=activity)
 
         log.info("Logged in as %s (%s)", self.user, self.user.id)
         log.info("Connected to %d guild(s)", guild_count)
