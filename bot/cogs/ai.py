@@ -47,8 +47,6 @@ class AIConfigModal(discord.ui.Modal, title="Configurar IA do servidor"):
         base_url = str(self.base_url.value).strip() or DEFAULT_BASE_URL
         model = str(self.model.value).strip() or DEFAULT_MODEL
 
-        # Groq keys start with gsk_. If optional fields were left blank or
-        # the old OpenRouter defaults were submitted, prefer Groq automatically.
         if api_key.startswith("gsk_") and base_url == OPENROUTER_BASE_URL:
             base_url = DEFAULT_BASE_URL
         if api_key.startswith("gsk_") and model == "openrouter/free":
@@ -172,12 +170,13 @@ class AI(commands.Cog):
             {"role": "user", "content": pergunta},
         ]
 
-        await interaction.response.defer(thinking=True)
+        await interaction.response.defer(thinking=True, ephemeral=True)
         try:
             answer = await client.chat(messages)
         except Exception:
             await interaction.followup.send(
-                "❌ Não consegui consultar a IA. Verifique a chave, endpoint e modelo."
+                "❌ Não consegui consultar a IA. Verifique a chave, endpoint e modelo.",
+                ephemeral=True,
             )
             return
 
@@ -188,7 +187,7 @@ class AI(commands.Cog):
             interaction.guild.id, interaction.user.id, "assistant", answer
         )
 
-        await interaction.followup.send(answer[:1900])
+        await interaction.followup.send(answer[:1900], ephemeral=True)
 
 
 async def setup(bot: commands.Bot) -> None:
