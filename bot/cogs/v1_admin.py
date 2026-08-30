@@ -30,27 +30,31 @@ class V1Admin(commands.Cog):
                 )
                 return
 
-            # The member cache can be empty without the privileged members
-            # intent. Fetch the guild with counts to obtain an approximate
-            # member total without requesting that privileged intent.
-            try:
-                guild_info = await self.bot.fetch_guild(guild.id, with_counts=True)
-                total_members = (
-                    guild_info.approximate_member_count
-                    or guild.member_count
-                    or len(guild.members)
-                    or 0
-                )
-            except discord.HTTPException:
-                total_members = guild.member_count or len(guild.members)
+            cached_members = list(guild.members)
+            total_members = guild.member_count
 
-            # Count bots that are actually known to the cache. For a small
-            # server this normally includes the bot itself. Human count is
-            # derived from the authoritative/approximate total, avoiding a
-            # misleading 0 when the full member cache is unavailable.
-            cached_bots = sum(1 for member in guild.members if member.bot)
-            bots = cached_bots
-            humans = max(0, total_members - bots)
+            # When the full member cache is available, this is exact.
+            # Otherwise, never manufacture a human count from a partial cache.
+            cache_complete = (
+                total_members is not None and len(cached_members) >= total_members
+            )
+            if cache_complete:
+                people = sum(1 for member in cached_members if not member.bot)
+                bots = sum(1 for member in cached_members if member.bot)
+                community = (
+                    f"👤 Pessoas **{people}**\n"
+                    f"🤖 Bots **{bots}**\n"
+                    f"📊 Total **{total_members}**"
+                )
+            else:
+                known_bots = sum(1 for member in cached_members if member.bot)
+                known_humans = sum(1 for member in cached_members if not member.bot)
+                community = (
+                    f"📊 Membros **{total_members or known_humans + known_bots}**\n"
+                    f"👤 Humanos conhecidos **{known_humans}**\n"
+                    f"🤖 Bots conhecidos **{known_bots}**\n"
+                    "*Ative Server Members Intent para obter a divisão exata.*"
+                )
 
             categories = len(guild.categories)
             text_channels = len(guild.text_channels)
@@ -80,15 +84,7 @@ class V1Admin(commands.Cog):
             elif self.bot.user:
                 embed.set_thumbnail(url=self.bot.user.display_avatar.url)
 
-            embed.add_field(
-                name="👥 Comunidade",
-                value=(
-                    f"👤 Pessoas **{humans}**\n"
-                    f"🤖 Bots conhecidos **{bots}**\n"
-                    f"📊 Membros **{total_members}**"
-                ),
-                inline=True,
-            )
+            embed.add_field(name="👥 Comunidade", value=community, inline=True)
             embed.add_field(
                 name="💬 Canais",
                 value=(
