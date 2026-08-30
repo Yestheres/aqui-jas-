@@ -27,25 +27,21 @@ class AquiJas(commands.Bot):
         await self.load_extension("bot.cogs.core")
         await self.load_extension("bot.cogs.v1_admin")
 
-        loaded_commands = list(self.tree.get_commands())
-
-        # First clear the old global registry. This removes commands left by
-        # the former AI build, which were causing duplicate entries in Discord.
-        self.tree.clear_commands(guild=None)
-        await self.tree.sync()
-
-        # Restore the current commands locally, then publish only to the test
-        # guild for immediate availability. In production, omit DEV_GUILD_ID
-        # and the same current set will be published globally instead.
-        for command in loaded_commands:
-            self.tree.add_command(command)
-
         if self.settings.dev_guild_id:
+            # Publish the current command set only to the development guild.
+            # Do this before clearing the global tree so the guild receives
+            # the fresh commands immediately.
             guild = discord.Object(id=self.settings.dev_guild_id)
             self.tree.copy_global_to(guild=guild)
             synced = await self.tree.sync(guild=guild)
+
+            # Remove any old global registrations. Keeping both global and
+            # guild versions is what causes Discord to show duplicates.
+            self.tree.clear_commands(guild=None)
+            await self.tree.sync()
+
             log.info(
-                "Synced %d commands to DEV_GUILD_ID=%s",
+                "Synced %d guild-only commands to DEV_GUILD_ID=%s; cleared global commands",
                 len(synced),
                 self.settings.dev_guild_id,
             )
