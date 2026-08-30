@@ -10,39 +10,78 @@ from ..agent.service import AgentService, preview_text
 
 
 class PlanView(discord.ui.View):
-    def __init__(self, service: AgentService, interaction: discord.Interaction, plan) -> None:
-        super().__init__(timeout=120)
+    def __init__(self, service: AgentService, original: discord.Interaction, plan) -> None:
+        super().__init__(timeout=180)
         self.service = service
-        self.original = interaction
+        self.original = original
         self.plan = plan
+        self.finished = False
 
-    async def _finish(self, interaction: discord.Interaction, execute: bool) -> None:
+    async def _owner(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.original.user.id:
-            await interaction.response.send_message("Só quem criou este plano pode decidir.", ephemeral=True)
-            return
+            await interaction.response.send_message(
+                "Só quem criou este plano pode decidir.", ephemeral=True
+            )
+            return False
+        if self.finished:
+            await interaction.response.send_message(
+                "Este plano já foi finalizado.", ephemeral=True
+            )
+            return False
+        return True
+
+    async def _disable(self) -> None:
         for child in self.children:
             child.disabled = True
-        if not execute:
-            await interaction.response.edit_message(content="❌ Plano rejeitado. Nenhuma alteração foi executada.", view=self)
-            return
-        self.plan.dry_run = False
-        await interaction.response.edit_message(content="⏳ Executando o plano...", view=self)
-        report = await self.service.execute(self.original.guild, self.original.user.id, self.plan)
-        lines = ["✅ **Execução concluída**"]
-        for item in report:
-            if item["status"] == "executed":
-                lines.append(f"• `{item['id']}` `{item['type']}` → ✅")
-            else:
-                lines.append(f"• `{item['id']}` `{item['type']}` → ❌ {item['error']}")
-        await interaction.edit_original_response(content="\n".join(lines), view=self)
 
     @discord.ui.button(label="Executar", style=discord.ButtonStyle.success)
     async def approve(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
-        await self._finish(interaction, True)
+        if not await self._owner(interaction):
+            return
+        self.finished = True
+        await self._disable()
+        await interaction.response.edit_message(
+            content="⏳ **Executando o plano aprovado...**",
+            view=self,
+        )
+
+        try:
+            report = await self.service.execute(
+                self.original.guild,
+                self.original.user.id,
+                self.plan,
+            )
+        except Exception as exc:
+            await interaction.edit_original_response(
+                content=f"❌ **Falha na execução:** `{exc}`",
+                view=self,
+            )
+            return
+
+        lines = ["✅ **Relatório de execução**"]
+        for item in report:
+            if item["status"] == "executed":
+                reused = " · reutilizado" if item.get("result", {}).get("reused") else ""
+                lines.append(f"• `{item['id']}` `{item['type']}` → ✅{reused}")
+            else:
+                lines.append(
+                    f"• `{item['id']}` `{item['type']}` → ❌ {item.get('error', 'erro desconhecido')}"
+                )
+        await interaction.edit_original_response(
+            content="\n".join(lines),
+            view=self,
+        )
 
     @discord.ui.button(label="Cancelar", style=discord.ButtonStyle.danger)
     async def reject(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
-        await self._finish(interaction, False)
+        if not await self._owner(interaction):
+            return
+        self.finished = True
+        await self._disable()
+        await interaction.response.edit_message(
+            content="❌ **Plano cancelado. Nenhuma alteração foi executada.**",
+            view=self,
+        )
 
 
 class Agent(commands.Cog):
@@ -51,36 +90,66 @@ class Agent(commands.Cog):
         self.service = AgentService(bot)
         self._locks: dict[int, asyncio.Lock] = {}
 
-    @app_commands.command(name="agente", description="Gera um plano seguro de alterações no servidor.")
-    @app_commands.describe(pedido="O que você quer organizar, configurar ou alterar?")
+    @app_commands.command(
+        name="agente",
+        description="Analisa um pedido, mostra um plano e aguarda sua aprovação.",
+    )
+    @app_commands.describe(pedido="O que você quer que o Aqui Jas faça?")
     @app_commands.default_permissions(manage_guild=True)
     async def agent(self, interaction: discord.Interaction, pedido: str) -> None:
         guild = interaction.guild
         if guild is None:
-            await interaction.response.send_message("Este comando só funciona em servidores.", ephemeral=True)
+            await interaction.response.send_message(
+                "Este comando só funciona em servidores.", ephemeral=True
+            )
             return
+
+        pedido = pedido.strip()
+        if not pedido:
+            await interaction.response.send_message(
+                "Escreva o que você quer alterar.", ephemeral=True
+            )
+            return
+        if len(pedido) > 1500:
+            await interaction.response.send_message(
+                "O pedido deve ter no máximo 1500 caracteres.", ephemeral=True
+            )
+            return
+
         lock = self._locks.setdefault(guild.id, asyncio.Lock())
         if lock.locked():
-            await interaction.response.send_message("Já existe um plano sendo analisado neste servidor.", ephemeral=True)
+            await interaction.response.send_message(
+                "⏳ Já existe um plano sendo analisado neste servidor.",
+                ephemeral=True,
+            )
             return
+
         async with lock:
             await interaction.response.defer(thinking=True, ephemeral=True)
             try:
                 plan = await self.service.generate_plan(guild, pedido)
             except Exception as exc:
-                await interaction.followup.send(f"❌ Não consegui gerar um plano seguro: {exc}", ephemeral=True)
+                await interaction.followup.send(
+                    f"❌ Não consegui gerar um plano seguro: `{exc}`",
+                    ephemeral=True,
+                )
                 return
-            text = preview_text(plan)
-            if len(text) > 3500:
-                text = text[:3497] + "..."
-            message = (
-                "🧠 **Plano gerado — nada foi alterado ainda.**\n\n"
-                + text
-                + "\n\n"
-                + ("⚠️ Este plano contém ações que exigem confirmação." if plan.requires_confirmation else "✅ Nenhuma ação de risco médio/alto foi detectada.")
+
+            preview = preview_text(plan)
+            if len(preview) > 3500:
+                preview = preview[:3497] + "..."
+
+            confirmation = (
+                "⚠️ **Este plano contém ações que exigem confirmação.**"
+                if plan.requires_confirmation
+                else "🟢 **Prévia pronta.** A execução só acontece quando você clicar em Executar."
             )
+
             await interaction.followup.send(
-                message,
+                "🧠 **Plano gerado — nada foi alterado ainda.**\n\n"
+                + preview
+                + "\n\n"
+                + confirmation,
                 view=PlanView(self.service, interaction, plan),
                 ephemeral=True,
             )
