@@ -7,9 +7,6 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-DEFAULT_AI_BASE_URL = "https://openrouter.ai/api/v1"
-DEFAULT_AI_MODEL = "openrouter/free"
-
 
 @dataclass(frozen=True, slots=True)
 class Settings:
@@ -17,9 +14,6 @@ class Settings:
     database_path: str = "data/bot.sqlite3"
     log_level: str = "INFO"
     dev_guild_id: int | None = None
-    ai_api_key: str = ""
-    ai_base_url: str = DEFAULT_AI_BASE_URL
-    ai_model: str = DEFAULT_AI_MODEL
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -31,14 +25,13 @@ class Settings:
         try:
             dev_guild_id = int(raw_guild) if raw_guild else None
         except ValueError as exc:
-            raise RuntimeError("DEV_GUILD_ID precisa ser um ID numérico do Discord.") from exc
+            raise RuntimeError(
+                "DEV_GUILD_ID precisa ser um ID numérico do Discord."
+            ) from exc
 
         return cls(
             discord_token=token,
             database_path=os.getenv("DATABASE_PATH", "data/bot.sqlite3"),
             log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
             dev_guild_id=dev_guild_id,
-            ai_api_key=os.getenv("AI_API_KEY", "").strip(),
-            ai_base_url=os.getenv("AI_BASE_URL", DEFAULT_AI_BASE_URL).strip(),
-            ai_model=os.getenv("AI_MODEL", DEFAULT_AI_MODEL).strip(),
         )
