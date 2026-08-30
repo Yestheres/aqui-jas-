@@ -8,7 +8,7 @@ import discord
 from ..ai.client import AIClient, AIConfig
 from .discord_tools import execute_action
 from .plan import AgentPlan, parse_plan, resolve_refs
-from .prompt import build_messages
+from .prompt import build_prompt, SYSTEM_PROMPT
 from .validator import validate_plan
 
 
@@ -34,7 +34,7 @@ class AgentService:
             return None
         return (
             settings.ai_api_key,
-            settings.ai_base_url or "https://api.openai.com/v1",
+            settings.ai_base_url or "https://openrouter.ai/api/v1",
             settings.ai_model or "openrouter/free",
         )
 
@@ -49,10 +49,8 @@ class AgentService:
 
         api_key, base_url, model = config
         client = AIClient(AIConfig(api_key=api_key, base_url=base_url, model=model))
-        raw = await client.chat(
-            build_messages(self.guild_context(guild), request, guild.id),
-            temperature=0.1,
-        )
+        user_prompt = build_prompt(self.guild_context(guild), request, guild.id)
+        raw = await client.chat(SYSTEM_PROMPT, user_prompt, temperature=0.1)
         plan = parse_plan(raw, guild.id)
         validate_plan(plan)
         return plan
