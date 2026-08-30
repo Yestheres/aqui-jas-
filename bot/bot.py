@@ -23,53 +23,39 @@ class AquiJas(commands.Bot):
             intents=intents,
             help_command=None,
             description=(
-                "Aqui Jas — ferramentas simples e bonitas para administrar seu servidor."
+                "Aqui Jas — ferramentas bonitas, simples e úteis para administrar seu servidor."
+            ),
+            status=discord.Status.online,
+            activity=discord.Activity(
+                type=discord.ActivityType.watching,
+                name="/ajuda • seu servidor",
             ),
         )
         self.settings = settings
         self.started_at = datetime.now(timezone.utc)
 
     async def setup_hook(self) -> None:
-        dev_guild = (
-            discord.Object(id=self.settings.dev_guild_id)
-            if self.settings.dev_guild_id
-            else None
-        )
-
-        # Purge stale remote registrations BEFORE cogs register anything.
-        # This removes old global commands from previous versions and old
-        # guild-specific commands from development.
-        if dev_guild is not None:
-            self.tree.clear_commands(guild=None)
-            await self.tree.sync()
-            self.tree.clear_commands(guild=dev_guild)
-            await self.tree.sync(guild=dev_guild)
+        # The bot now uses ONE application-command scope: global.
+        # Older versions created both guild and global commands, which made
+        # Discord display duplicates. Remove the legacy guild registrations
+        # and then publish the current tree globally.
+        if self.settings.dev_guild_id:
+            legacy_guild = discord.Object(id=self.settings.dev_guild_id)
+            self.tree.clear_commands(guild=legacy_guild)
+            try:
+                await self.tree.sync(guild=legacy_guild)
+                log.info("Cleared legacy guild commands for %s", legacy_guild.id)
+            except discord.HTTPException:
+                log.exception("Failed clearing legacy guild commands for %s", legacy_guild.id)
 
         await self.load_extension("bot.cogs.core")
         await self.load_extension("bot.cogs.v1_admin")
 
-        if dev_guild is not None:
-            synced = await self.tree.sync(guild=dev_guild)
-            log.info(
-                "Published %d guild-only commands to DEV_GUILD_ID=%s: %s",
-                len(synced),
-                self.settings.dev_guild_id,
-                ", ".join(command.name for command in synced),
-            )
-        else:
-            synced = await self.tree.sync()
-            log.info(
-                "Published %d global commands: %s",
-                len(synced),
-                ", ".join(command.name for command in synced),
-            )
-
-        await self.change_presence(
-            status=discord.Status.online,
-            activity=discord.Activity(
-                type=discord.ActivityType.watching,
-                name="/ajuda • seu servidor",
-            ),
+        synced = await self.tree.sync()
+        log.info(
+            "Published %d global commands: %s",
+            len(synced),
+            ", ".join(command.name for command in synced),
         )
 
     async def on_ready(self) -> None:
@@ -79,10 +65,7 @@ class AquiJas(commands.Bot):
         log.info("Connected to %d guild(s)", len(self.guilds))
 
     async def on_guild_join(self, guild: discord.Guild) -> None:
-        if self.settings.dev_guild_id:
-            return
-        synced = await self.tree.sync(guild=guild)
-        log.info("Synced %d commands to new guild %s", len(synced), guild.id)
+        log.info("Joined guild %s (%s); commands are global", guild.name, guild.id)
 
 
 def create_bot(settings: Settings) -> AquiJas:
