@@ -15,8 +15,6 @@ log = logging.getLogger(__name__)
 
 class AquiJas(commands.Bot):
     def __init__(self, settings: Settings) -> None:
-        # Start with non-privileged intents. Privileged intents are enabled only
-        # when a feature actually needs them and the Discord portal is configured.
         intents = discord.Intents.default()
         intents.guilds = True
 
@@ -34,6 +32,8 @@ class AquiJas(commands.Bot):
         await self.load_extension("bot.cogs.core")
         await self.load_extension("bot.cogs.ai")
 
+        # Global commands can take time to propagate. Development guilds are
+        # synced immediately when DEV_GUILDS is configured in the environment.
         if self.settings.dev_guilds:
             for guild_id in self.settings.dev_guilds:
                 guild = discord.Object(id=guild_id)
@@ -46,6 +46,7 @@ class AquiJas(commands.Bot):
     async def on_ready(self) -> None:
         if self.user is not None:
             log.info("Logged in as %s (%s)", self.user, self.user.id)
+            log.info("Connected to %d guild(s)", len(self.guilds))
 
     async def close(self) -> None:
         await self.db.close()
