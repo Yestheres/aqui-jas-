@@ -6,7 +6,6 @@ from pathlib import Path
 import discord
 from discord.ext import commands
 
-from .agent.tools import ToolRegistry
 from .config import Settings
 from .database import Database
 
@@ -24,7 +23,6 @@ class AquiJas(commands.Bot):
         )
         self.settings = settings
         self.db = Database(settings.database_path)
-        self.tools = ToolRegistry()
         self._commands_synced = False
 
     async def setup_hook(self) -> None:
@@ -37,8 +35,6 @@ class AquiJas(commands.Bot):
         ):
             await self.load_extension(extension)
 
-        # If DEV_GUILD_ID is set in Shard Cloud, sync there during startup.
-        # Guild commands propagate immediately and do not depend on global sync.
         if self.settings.dev_guild_id:
             guild = discord.Object(id=self.settings.dev_guild_id)
             self.tree.copy_global_to(guild=guild)
