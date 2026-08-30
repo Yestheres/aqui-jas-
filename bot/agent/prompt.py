@@ -16,3 +16,8 @@ def build_prompt(guild_context: str, request: str, guild_id: int) -> str:
         f"PEDIDO DO USUÁRIO: {request}\n\n"
         "Retorne somente um objeto JSON com version, mode, guild_id, reason, checks, actions e execution."
     )
+
+
+# Compatibilidade com versões anteriores do AgentService.
+def build_messages(guild_context: str, request: str, guild_id: int) -> str:
+    return build_prompt(guild_context, request, guild_id)
