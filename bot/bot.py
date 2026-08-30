@@ -13,7 +13,9 @@ log = logging.getLogger(__name__)
 
 class AquiJas(commands.Bot):
     def __init__(self, settings: Settings) -> None:
-        intents = discord.Intents.default()
+        # Start with NO gateway intents and explicitly request only guilds.
+        # This guarantees the bot never asks Discord for a privileged intent.
+        intents = discord.Intents.none()
         intents.guilds = True
 
         super().__init__(
