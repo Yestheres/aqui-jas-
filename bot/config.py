@@ -14,6 +14,9 @@ class Settings:
     database_path: str = "data/bot.sqlite3"
     log_level: str = "INFO"
     dev_guilds: tuple[int, ...] = ()
+    ai_api_key: str = ""
+    ai_base_url: str = "https://api.openai.com/v1"
+    ai_model: str = "gpt-5-mini"
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -33,4 +36,7 @@ class Settings:
             database_path=os.getenv("DATABASE_PATH", "data/bot.sqlite3"),
             log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
             dev_guilds=tuple(guilds),
+            ai_api_key=os.getenv("AI_API_KEY", "").strip(),
+            ai_base_url=os.getenv("AI_BASE_URL", "https://api.openai.com/v1").strip(),
+            ai_model=os.getenv("AI_MODEL", "gpt-5-mini").strip(),
         )
