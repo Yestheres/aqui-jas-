@@ -5,6 +5,10 @@ from pathlib import Path
 import aiosqlite
 
 
+DEFAULT_AI_BASE_URL = "https://openrouter.ai/api/v1"
+DEFAULT_AI_MODEL = "openrouter/free"
+
+
 class Database:
     """Small async SQLite wrapper used by the bot services."""
 
@@ -108,8 +112,8 @@ class Database:
         await cursor.close()
         if not row or not row[0]:
             return None
-        return str(row[0]), str(row[1] or "https://api.openai.com/v1"), str(
-            row[2] or "gpt-5-mini"
+        return str(row[0]), str(row[1] or DEFAULT_AI_BASE_URL), str(
+            row[2] or DEFAULT_AI_MODEL
         )
 
     async def clear_ai_config(self, guild_id: int) -> None:
