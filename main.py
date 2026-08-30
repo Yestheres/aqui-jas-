@@ -15,19 +15,27 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
 )
-log = logging.getLogger("aqui_jas")
+log = logging.getLogger("discord_bot")
 
 
-class AquiJas(discord.Client):
+class Bot(discord.Client):
     def __init__(self) -> None:
         intents = discord.Intents.none()
         intents.guilds = True
         super().__init__(intents=intents)
         self.tree = app_commands.CommandTree(self)
 
+    @property
+    def display_name(self) -> str:
+        return self.user.name if self.user else "Bot"
+
     async def setup_hook(self) -> None:
         synced = await self.tree.sync()
-        log.info("Sincronizados %d comandos globais: %s", len(synced), ", ".join(c.name for c in synced))
+        log.info(
+            "Sincronizados %d comandos globais: %s",
+            len(synced),
+            ", ".join(command.name for command in synced),
+        )
 
     async def on_ready(self) -> None:
         if self.user is None:
@@ -43,15 +51,16 @@ class AquiJas(discord.Client):
         log.info("Conectado a %d servidor(es)", len(self.guilds))
 
 
-bot = AquiJas()
+bot = Bot()
 
 
-@bot.tree.command(name="ping", description="Verifica se o Aqui Jas está online.")
+@bot.tree.command(name="ping", description="Verifica se o bot está online.")
 async def ping(interaction: discord.Interaction) -> None:
     latency = round(bot.latency * 1000)
+    name = bot.display_name
     embed = discord.Embed(
         title="🏓 Pong!",
-        description="O **Aqui Jas** está online e respondendo.",
+        description=f"O **{name}** está online e respondendo.",
         color=discord.Color.blurple(),
     )
     embed.add_field(name="⚡ Latência", value=f"`{latency} ms`", inline=True)
@@ -59,13 +68,16 @@ async def ping(interaction: discord.Interaction) -> None:
     await interaction.response.send_message(embed=embed)
 
 
-@bot.tree.command(name="sobre", description="Mostra informações sobre o Aqui Jas.")
+@bot.tree.command(name="sobre", description="Mostra informações sobre o bot.")
 async def sobre(interaction: discord.Interaction) -> None:
+    name = bot.display_name
     embed = discord.Embed(
-        title="✨ Aqui Jas",
+        title=f"✨ {name}",
         description="Um bot Discord leve, moderno e modular — começando do zero.",
         color=discord.Color.blurple(),
     )
+    if bot.user:
+        embed.set_thumbnail(url=bot.user.display_avatar.url)
     embed.add_field(name="🐍 Python", value=f"`{platform.python_version()}`", inline=True)
     embed.add_field(name="📦 discord.py", value=f"`{discord.__version__}`", inline=True)
     embed.add_field(name="🏠 Servidores", value=f"`{len(bot.guilds)}`", inline=True)
@@ -85,7 +97,7 @@ async def servidor(interaction: discord.Interaction) -> None:
 
     embed = discord.Embed(
         title=f"🏠 {guild.name}",
-        description="Informações básicas do servidor.",
+        description=f"Informações básicas do servidor • {bot.display_name}",
         color=discord.Color.blurple(),
     )
     if guild.icon:
@@ -103,8 +115,9 @@ async def servidor(interaction: discord.Interaction) -> None:
 
 @bot.tree.command(name="ajuda", description="Mostra os comandos disponíveis.")
 async def ajuda(interaction: discord.Interaction) -> None:
+    name = bot.display_name
     embed = discord.Embed(
-        title="✨ Aqui Jas",
+        title=f"✨ {name}",
         description="**Central de comandos**",
         color=discord.Color.blurple(),
     )
