@@ -27,27 +27,33 @@ class AquiJas(commands.Bot):
         await self.load_extension("bot.cogs.core")
         await self.load_extension("bot.cogs.v1_admin")
 
-        if self.settings.dev_guild_id:
-            # Publish the current command set only to the development guild.
-            # Do this before clearing the global tree so the guild receives
-            # the fresh commands immediately.
-            guild = discord.Object(id=self.settings.dev_guild_id)
-            self.tree.copy_global_to(guild=guild)
-            synced = await self.tree.sync(guild=guild)
+        commands_to_publish = list(self.tree.get_commands())
 
-            # Remove any old global registrations. Keeping both global and
-            # guild versions is what causes Discord to show duplicates.
+        if self.settings.dev_guild_id:
+            guild = discord.Object(id=self.settings.dev_guild_id)
+
+            # Clear global commands first.
             self.tree.clear_commands(guild=None)
             await self.tree.sync()
 
+            # Clear old commands registered specifically to the development guild.
+            self.tree.clear_commands(guild=guild)
+            await self.tree.sync(guild=guild)
+
+            # Register the current commands directly on the guild.
+            for command in commands_to_publish:
+                self.tree.add_command(command, guild=guild)
+
+            synced = await self.tree.sync(guild=guild)
             log.info(
-                "Synced %d guild-only commands to DEV_GUILD_ID=%s; cleared global commands",
+                "Published %d guild-only commands to DEV_GUILD_ID=%s",
                 len(synced),
                 self.settings.dev_guild_id,
             )
-        else:
-            synced = await self.tree.sync()
-            log.info("Synced %d global commands", len(synced))
+            return
+
+        synced = await self.tree.sync()
+        log.info("Published %d global commands", len(synced))
 
     async def on_ready(self) -> None:
         if self.user is None:
