@@ -11,7 +11,7 @@ class V1Admin(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
 
-    @app_commands.command(name="servidor", description="Mostra informações deste servidor.")
+    @app_commands.command(name="servidor", description="Mostra informações do servidor.")
     async def server(self, interaction: discord.Interaction) -> None:
         guild = interaction.guild
         if guild is None:
@@ -20,21 +20,29 @@ class V1Admin(commands.Cog):
             )
             return
 
-        humans = sum(1 for member in guild.members if not member.bot)
-        bots = sum(1 for member in guild.members if member.bot)
+        try:
+            members = [member async for member in guild.fetch_members(limit=None)]
+        except (discord.Forbidden, discord.HTTPException):
+            # Fallback para o cache se o servidor/intents não permitirem a consulta.
+            members = list(guild.members)
+
+        humans = sum(not member.bot for member in members)
+        bots = sum(member.bot for member in members)
+        categories = len(guild.categories)
+        channels = len(guild.channels) - categories
 
         embed = discord.Embed(
             title=f"🏠 {guild.name}",
-            description="Resumo do servidor",
+            description="Informações do servidor",
             color=discord.Color.blurple(),
         )
-        embed.add_field(name="👥 Pessoas", value=str(humans), inline=True)
-        embed.add_field(name="🤖 Bots", value=str(bots), inline=True)
-        embed.add_field(name="📊 Total", value=str(humans + bots), inline=True)
-        embed.add_field(name="💬 Canais", value=str(len(guild.channels)), inline=True)
-        embed.add_field(name="🗂️ Categorias", value=str(len(guild.categories)), inline=True)
-        embed.add_field(name="🎭 Cargos", value=str(len(guild.roles)), inline=True)
-        embed.set_footer(text=f"ID: {guild.id}")
+        embed.add_field(name="👥 Pessoas", value=f"`{humans}`", inline=True)
+        embed.add_field(name="🤖 Bots", value=f"`{bots}`", inline=True)
+        embed.add_field(name="📊 Membros", value=f"`{humans + bots}`", inline=True)
+        embed.add_field(name="💬 Canais", value=f"`{channels}`", inline=True)
+        embed.add_field(name="🗂️ Categorias", value=f"`{categories}`", inline=True)
+        embed.add_field(name="🎭 Cargos", value=f"`{len(guild.roles)}`", inline=True)
+        embed.set_footer(text=f"ID do servidor: {guild.id}")
 
         await interaction.response.send_message(embed=embed)
 
