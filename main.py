@@ -8,7 +8,6 @@ import re
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
 
 import discord
 from discord import app_commands
@@ -127,14 +126,6 @@ def set_request_message(request_id: int, message_id: int) -> None:
         db.commit()
 
 
-def get_pending_request(request_id: int) -> sqlite3.Row | None:
-    with db_connect() as db:
-        return db.execute(
-            "SELECT * FROM partnership_requests WHERE id = ? AND status = 'pending'",
-            (request_id,),
-        ).fetchone()
-
-
 def has_pending_request(guild_id: int, user_id: int) -> bool:
     with db_connect() as db:
         row = db.execute(
@@ -222,7 +213,9 @@ class PartnershipDecisionView(discord.ui.View):
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.guild is None:
-            await interaction.response.send_message("Essa ação só funciona dentro de um servidor.", ephemeral=True)
+            await interaction.response.send_message(
+                "Essa ação só funciona dentro de um servidor.", ephemeral=True
+            )
             return False
         if not interaction.user.guild_permissions.manage_guild:
             await interaction.response.send_message(
@@ -237,13 +230,11 @@ class PartnershipDecisionView(discord.ui.View):
         row = finish_request(self.request_id, status)
         if row is None:
             await interaction.response.send_message(
-                "Essa solicitação já foi decidida.",
-                ephemeral=True,
+                "Essa solicitação já foi decidida.", ephemeral=True
             )
             return
 
         if approved:
-            channel = self.bot.get_channel(int(row["guild_id"] and 0))
             settings = get_settings(int(row["guild_id"]))
             partnership_channel_id = settings["partnership_channel_id"] if settings else None
             destination = None
@@ -257,7 +248,7 @@ class PartnershipDecisionView(discord.ui.View):
 
             if not isinstance(destination, discord.TextChannel):
                 await interaction.response.send_message(
-                    "Parceria aprovada, mas não consegui acessar o canal de parceria configurado.",
+                    "Parceria aprovada, mas o canal de parceria configurado não está disponível.",
                     ephemeral=True,
                 )
             else:
@@ -267,11 +258,17 @@ class PartnershipDecisionView(discord.ui.View):
                     color=discord.Color.green(),
                     timestamp=datetime.now(timezone.utc),
                 )
-                embed.add_field(name="🔗 Convite", value=f"[Entrar no servidor]({row['invite_url']})", inline=False)
-                embed.set_footer(text=f"Parceria enviada por ID {row['user_id']}")
+                embed.add_field(
+                    name="🔗 Convite",
+                    value=f"[Entrar no servidor]({row['invite_url']})",
+                    inline=False,
+                )
+                embed.set_footer(text=f"Solicitação #{row['id']}")
                 try:
                     await destination.send(embed=embed)
-                    await interaction.response.send_message("✅ Parceria aprovada e publicada.", ephemeral=True)
+                    await interaction.response.send_message(
+                        "✅ Parceria aprovada e publicada.", ephemeral=True
+                    )
                 except discord.HTTPException:
                     await interaction.response.send_message(
                         "Parceria aprovada, mas não consegui publicar no canal configurado.",
@@ -281,24 +278,35 @@ class PartnershipDecisionView(discord.ui.View):
             await interaction.response.send_message("❌ Parceria recusada.", ephemeral=True)
 
         if interaction.message:
-            current = interaction.message.embeds[0].copy() if interaction.message.embeds else discord.Embed()
+            current = (
+                interaction.message.embeds[0].copy()
+                if interaction.message.embeds
+                else discord.Embed(title="Solicitação de parceria")
+            )
             current.color = discord.Color.green() if approved else discord.Color.red()
             current.add_field(
                 name="Resultado",
                 value=f"{'✅ Aprovada' if approved else '❌ Recusada'} por {interaction.user.mention}",
                 inline=False,
             )
-            disabled_view = PartnershipDecisionView(self.bot, self.request_id)
-            for child in disabled_view.children:
-                child.disabled = True
             try:
-                await interaction.message.edit(embed=current, view=disabled_view)
+                await interaction.message.edit(embed=current, view=None)
             except discord.HTTPException:
-                log.exception("Failed to update partnership request message %s", self.request_id)
+                log.exception(
+                    "Falha ao atualizar mensagem da solicitação #%s", self.request_id
+                )
 
-    @discord.ui.button(label="", style=discord.ButtonStyle.success, custom_id="unused")
-    async def unused(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        await interaction.response.send_message("Botão inválido.", ephemeral=True)
+    async def on_error(
+        self,
+        interaction: discord.Interaction,
+        error: Exception,
+        item: discord.ui.Item,
+    ) -> None:
+        log.exception("Erro no botão da parceria #%s", self.request_id, exc_info=error)
+        if not interaction.response.is_done():
+            await interaction.response.send_message(
+                "❌ Ocorreu um erro ao processar essa solicitação.", ephemeral=True
+            )
 
 
 class AquiJas(discord.Client):
@@ -308,6 +316,7 @@ class AquiJas(discord.Client):
         intents.message_content = True
         super().__init__(intents=intents)
         self.tree = app_commands.CommandTree(self)
+        self._legacy_guild_cleanup_done = False
 
     @property
     def display_name(self) -> str:
@@ -316,7 +325,6 @@ class AquiJas(discord.Client):
     async def setup_hook(self) -> None:
         init_database()
         self.tree.add_command(parceria)
-
         synced = await self.tree.sync()
         log.info(
             "Sincronizados %d comandos globais: %s",
@@ -334,6 +342,15 @@ class AquiJas(discord.Client):
     async def on_ready(self) -> None:
         if self.user is None:
             return
+        if not self._legacy_guild_cleanup_done:
+            for guild in self.guilds:
+                try:
+                    self.tree.clear_commands(guild=guild)
+                    await self.tree.sync(guild=guild)
+                except discord.HTTPException:
+                    log.exception("Falha ao limpar comandos antigos da guild %s", guild.id)
+            self._legacy_guild_cleanup_done = True
+
         await self.change_presence(
             status=discord.Status.online,
             activity=discord.Activity(
@@ -344,17 +361,10 @@ class AquiJas(discord.Client):
         log.info("Online como %s (%s)", self.user, self.user.id)
         log.info("Conectado a %d servidor(es)", len(self.guilds))
 
-        # Remove old guild-only command registrations created by previous builds.
-        for guild in self.guilds:
-            try:
-                self.tree.clear_commands(guild=guild)
-                await self.tree.sync(guild=guild)
-            except discord.HTTPException:
-                log.exception("Falha ao limpar comandos antigos da guild %s", guild.id)
-
     async def on_message(self, message: discord.Message) -> None:
         if message.author.bot or message.guild is None:
             return
+
         content = message.content.strip()
         if content not in {"#parceria", "#perguntar"}:
             return
@@ -368,10 +378,18 @@ class AquiJas(discord.Client):
 
         if content == "#parceria":
             set_channel(message.guild.id, "partnership_channel_id", message.channel.id)
-            log.info("Canal de parceria definido: guild=%s channel=%s", message.guild.id, message.channel.id)
+            log.info(
+                "Canal de parceria definido: guild=%s channel=%s",
+                message.guild.id,
+                message.channel.id,
+            )
         else:
             set_channel(message.guild.id, "staff_channel_id", message.channel.id)
-            log.info("Canal staff de aprovação definido: guild=%s channel=%s", message.guild.id, message.channel.id)
+            log.info(
+                "Canal staff definido: guild=%s channel=%s",
+                message.guild.id,
+                message.channel.id,
+            )
 
 
 bot = AquiJas()
@@ -421,8 +439,7 @@ async def servidor(interaction: discord.Interaction) -> None:
     guild = interaction.guild
     if guild is None:
         await interaction.response.send_message(
-            "Esse comando só funciona dentro de um servidor.",
-            ephemeral=True,
+            "Esse comando só funciona dentro de um servidor.", ephemeral=True
         )
         return
 
@@ -433,7 +450,11 @@ async def servidor(interaction: discord.Interaction) -> None:
     )
     if guild.icon:
         embed.set_thumbnail(url=guild.icon.url)
-    embed.add_field(name="👥 Membros", value=f"`{guild.member_count or 'indisponível'}`", inline=True)
+    embed.add_field(
+        name="👥 Membros",
+        value=f"`{guild.member_count or 'indisponível'}`",
+        inline=True,
+    )
     embed.add_field(name="💬 Canais", value=f"`{len(guild.channels)}`", inline=True)
     embed.add_field(name="🗂️ Categorias", value=f"`{len(guild.categories)}`", inline=True)
     embed.add_field(name="🎭 Cargos", value=f"`{max(0, len(guild.roles) - 1)}`", inline=True)
@@ -482,8 +503,7 @@ async def parceria(
 ) -> None:
     if interaction.guild is None:
         await interaction.response.send_message(
-            "Esse comando só pode ser usado em um servidor.",
-            ephemeral=True,
+            "Esse comando só pode ser usado em um servidor.", ephemeral=True
         )
         return
 
@@ -545,14 +565,17 @@ async def parceria(
     )
     embed.add_field(name="👤 Solicitante", value=interaction.user.mention, inline=True)
     embed.add_field(name="🆔 ID da solicitação", value=f"`{request_id}`", inline=True)
-    embed.add_field(name="🔗 Convite", value=f"[Abrir convite]({normalized_link})", inline=False)
+    embed.add_field(
+        name="🔗 Convite",
+        value=f"[Abrir convite]({normalized_link})",
+        inline=False,
+    )
     embed.set_footer(text="Analise a solicitação antes de publicar a parceria.")
 
     view = PartnershipDecisionView(bot, request_id)
     try:
         staff_message = await staff_channel.send(embed=embed, view=view)
         set_request_message(request_id, staff_message.id)
-        bot.add_view(view, message_id=staff_message.id)
     except discord.HTTPException:
         finish_request(request_id, "rejected")
         await interaction.edit_original_response(
