@@ -1,58 +1,79 @@
 # Aqui Jas
 
-Bot Discord reconstruído do zero, com arquitetura modular e agente IA separado da execução real.
+Bot Discord modular com agente IA controlado.
 
-## Fluxo do Agent
+## Arquitetura
 
-`pedido → IA → JSON Plan → validação → preview → confirmação → executor → Discord → auditoria`
+```text
+Discord
+  ↓
+Cogs / comandos
+  ↓
+AgentService
+  ↓
+IA gera um Plan JSON
+  ↓
+Validator (schema, risco, IDs e dependências)
+  ↓
+Preview
+  ↓
+Confirmação
+  ↓
+Executor controlado
+  ↓
+Discord API
+  ↓
+Audit log (SQLite)
+```
 
-A IA **não recebe acesso direto à API do Discord**. Ela apenas propõe ações estruturadas; o executor controlado valida permissões, hierarquia, risco e referências entre ações.
+A IA não recebe acesso direto à API do Discord. Ela propõe ações; o executor valida permissões e executa apenas ações presentes no catálogo.
 
-## V1 atual
+## V1
 
-- Configuração de IA por servidor (`/configia`)
-- OpenAI-compatible API
-- OpenRouter como padrão (`openrouter/free`)
-- Memória conversacional por servidor/usuário
-- Auditoria de ações
-- Planos JSON versionados
-- `plan → preview → execute`
-- Referências `$action_X.result.campo`
-- Idempotência básica para criação de canais/cargos
-- Confirmação para ações de risco médio/alto
-- Canais, categorias, slowmode, permissões de canal, cargos e membros
+- IA configurável por servidor com `/configia`
+- Fallback global opcional por variáveis de ambiente
+- Memória conversacional por servidor + usuário
+- `/ia`, `/iastatus`, `/iaremover`
+- `/agente` com plan → preview → confirmação → execução
+- IDs como alvo principal
+- Referências entre ações (`$action_1.result.channel_id`)
+- Idempotência básica para criação de canais e cargos
+- Verificação de permissões do bot
+- Verificação de hierarquia de cargos
+- Risco alto com confirmação obrigatória
+- `stop_and_report` para falhas
+- Auditoria das ações executadas/falhas
+- V1 do Agent focada em canais, cargos, permissões e mensagens
 
-## Comandos
+### Ações do Agent na V1
 
-- `/ping`
-- `/sobre`
-- `/ajuda`
-- `/servidor`
-- `/configia`
-- `/iastatus`
-- `/iaremover`
-- `/ia`
-- `/agente`
+`create_channel`, `update_channel`, `delete_channel`, `move_channel`, `set_channel_permissions`, `sync_channel_permissions`, `create_role`, `update_role`, `delete_role`, `assign_role`, `remove_role`, `send_message`, `delete_message`.
 
-## Sincronização dos slash commands
+Ações de moderação de membros como ban/kick/timeout não ficam expostas ao Agent na V1. A intenção é tratá-las em uma camada própria de moderação posteriormente.
 
-Para desenvolvimento, configure `DEV_GUILD_ID` com o ID do seu servidor. O bot sincroniza os comandos diretamente nessa guilda durante o startup, evitando esperar pela propagação global.
+## IA
 
-Em produção, ele também sincroniza as guildas conhecidas quando conecta.
+Cada servidor pode usar sua própria chave, endpoint e modelo. A configuração do servidor tem prioridade.
 
-## Configuração
+Opcionalmente, para desenvolvimento, é possível definir no ambiente da hospedagem:
 
 ```env
-DISCORD_TOKEN=...
-DEV_GUILD_ID=123456789012345678
-DATABASE_PATH=data/bot.sqlite3
-LOG_LEVEL=INFO
 AI_API_KEY=
 AI_BASE_URL=https://openrouter.ai/api/v1
 AI_MODEL=openrouter/free
 ```
 
-A chave da IA do servidor é configurada pelo `/configia`. Ela é armazenada por `guild_id` e não é exibida nas respostas do bot.
+Essas variáveis funcionam apenas como fallback quando o servidor não possui uma configuração própria.
+
+## Slash commands
+
+Para sincronização imediata em desenvolvimento, defina:
+
+```env
+DEV_GUILD_ID=123456789012345678
+```
+
+O bot também sincroniza os comandos nas guilds em que está conectado.
 
 ## Execução local
 
@@ -61,16 +82,4 @@ pip install -r requirements.txt
 python main.py
 ```
 
-## Próximas camadas
-
-V2: catálogo e executor mais amplo.
-
-V3: moderação.
-
-V4: comunidade.
-
-V5: música.
-
-V6: snapshots e rollback.
-
-V7: Agent completo.
+Nunca coloque tokens ou API keys no Git.
