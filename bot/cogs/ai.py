@@ -21,14 +21,14 @@ class AIConfigModal(discord.ui.Modal, title="Configurar IA do servidor"):
     )
     base_url = discord.ui.TextInput(
         label="URL da API (opcional)",
-        placeholder="OpenRouter: https://openrouter.ai/api/v1",
+        placeholder=DEFAULT_BASE_URL,
         style=discord.TextStyle.short,
         required=False,
         max_length=300,
     )
     model = discord.ui.TextInput(
         label="Modelo (opcional)",
-        placeholder="openrouter/free",
+        placeholder=DEFAULT_MODEL,
         style=discord.TextStyle.short,
         required=False,
         max_length=150,
@@ -40,9 +40,9 @@ class AIConfigModal(discord.ui.Modal, title="Configurar IA do servidor"):
         self.guild_id = guild_id
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
+        api_key = str(self.api_key.value).strip()
         base_url = str(self.base_url.value).strip() or DEFAULT_BASE_URL
         model = str(self.model.value).strip() or DEFAULT_MODEL
-        api_key = str(self.api_key.value).strip()
 
         if not base_url.startswith(("http://", "https://")):
             await interaction.response.send_message(
@@ -55,10 +55,8 @@ class AIConfigModal(discord.ui.Modal, title="Configurar IA do servidor"):
             self.guild_id, api_key, base_url.rstrip("/"), model
         )
         await interaction.response.send_message(
-            "✅ **IA configurada para este servidor!**\n\n"
-            f"• Modelo: `{discord.utils.escape_markdown(model)}`\n"
-            f"• Endpoint: `{discord.utils.escape_markdown(base_url)}`\n\n"
-            "A chave foi salva na configuração deste servidor e não será exibida pelo bot.",
+            "✅ **IA configurada neste servidor.**\n"
+            f"Modelo: `{discord.utils.escape_markdown(model)}`",
             ephemeral=True,
         )
 
@@ -66,6 +64,21 @@ class AIConfigModal(discord.ui.Modal, title="Configurar IA do servidor"):
 class AI(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
+
+    def _global_fallback(self) -> tuple[str, str, str] | None:
+        settings = getattr(self.bot, "settings", None)
+        if settings is None or not settings.ai_api_key:
+            return None
+        return (
+            settings.ai_api_key,
+            settings.ai_base_url or DEFAULT_BASE_URL,
+            settings.ai_model or DEFAULT_MODEL,
+        )
+
+    async def _get_config(self, guild_id: int) -> tuple[str, str, str] | None:
+        # Server configuration always wins. Environment values are only an
+        # explicit development fallback when the server has no key configured.
+        return await self.bot.db.get_ai_config(guild_id) or self._global_fallback()
 
     @app_commands.command(name="configia", description="Configura a IA usada por este servidor.")
     @app_commands.default_permissions(manage_guild=True)
@@ -75,7 +88,35 @@ class AI(commands.Cog):
                 "Este comando só pode ser usado em um servidor.", ephemeral=True
             )
             return
-        await interaction.response.send_modal(AIConfigModal(self.bot, interaction.guild.id))
+        await interaction.response.send_modal(
+            AIConfigModal(self.bot, interaction.guild.id)
+        )
+
+    @app_commands.command(name="iastatus", description="Mostra o status da IA deste servidor.")
+    async def status(self, interaction: discord.Interaction) -> None:
+        if interaction.guild is None:
+            await interaction.response.send_message(
+                "Este comando só pode ser usado em um servidor.", ephemeral=True
+            )
+            return
+
+        server_config = await self.bot.db.get_ai_config(interaction.guild.id)
+        config = server_config or self._global_fallback()
+        if config is None:
+            await interaction.response.send_message(
+                "⚪ Nenhuma IA configurada. Use `/configia`.", ephemeral=True
+            )
+            return
+
+        _, base_url, model = config
+        source = "servidor" if server_config else "fallback global"
+        await interaction.response.send_message(
+            "🟢 **IA disponível**\n"
+            f"• Fonte: `{source}`\n"
+            f"• Endpoint: `{discord.utils.escape_markdown(base_url)}`\n"
+            f"• Modelo: `{discord.utils.escape_markdown(model)}`",
+            ephemeral=True,
+        )
 
     @app_commands.command(name="iaremover", description="Remove a IA configurada neste servidor.")
     @app_commands.default_permissions(manage_guild=True)
@@ -85,38 +126,12 @@ class AI(commands.Cog):
                 "Este comando só pode ser usado em um servidor.", ephemeral=True
             )
             return
-
         await self.bot.db.clear_ai_config(interaction.guild.id)
         await interaction.response.send_message(
-            "🗑️ A configuração de IA deste servidor foi removida.", ephemeral=True
+            "🗑️ A configuração própria deste servidor foi removida.", ephemeral=True
         )
 
-    @app_commands.command(name="iastatus", description="Mostra se a IA está configurada neste servidor.")
-    async def status(self, interaction: discord.Interaction) -> None:
-        if interaction.guild is None:
-            await interaction.response.send_message(
-                "Este comando só pode ser usado em um servidor.", ephemeral=True
-            )
-            return
-
-        config = await self.bot.db.get_ai_config(interaction.guild.id)
-        if config is None:
-            await interaction.response.send_message(
-                "⚪ A IA ainda não foi configurada neste servidor. Use `/configia`.",
-                ephemeral=True,
-            )
-            return
-
-        _, base_url, model = config
-        await interaction.response.send_message(
-            "🟢 **IA configurada**\n"
-            f"• Modelo: `{discord.utils.escape_markdown(model)}`\n"
-            f"• Endpoint: `{discord.utils.escape_markdown(base_url)}`\n"
-            "• Chave: `configurada`",
-            ephemeral=True,
-        )
-
-    @app_commands.command(name="ia", description="Converse com a IA configurada para este servidor.")
+    @app_commands.command(name="ia", description="Converse com a IA deste servidor.")
     @app_commands.describe(pergunta="O que você quer perguntar?")
     async def ask(self, interaction: discord.Interaction, pergunta: str) -> None:
         if interaction.guild is None:
@@ -125,10 +140,10 @@ class AI(commands.Cog):
             )
             return
 
-        config = await self.bot.db.get_ai_config(interaction.guild.id)
+        config = await self._get_config(interaction.guild.id)
         if config is None:
             await interaction.response.send_message(
-                "⚪ A IA deste servidor ainda não foi configurada. Um administrador deve usar `/configia`.",
+                "⚪ Configure uma IA com `/configia` ou defina o fallback global.",
                 ephemeral=True,
             )
             return
@@ -136,23 +151,36 @@ class AI(commands.Cog):
         api_key, base_url, model = config
         client = AIClient(AIConfig(api_key=api_key, base_url=base_url, model=model))
 
+        memory = await self.bot.db.get_memory(interaction.guild.id, interaction.user.id)
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "Você é o assistente do Aqui Jas. Seja útil, direto e seguro. "
+                    "Não afirme ter executado ações do Discord que não foram executadas."
+                ),
+            },
+            *({"role": role, "content": content} for role, content in memory),
+            {"role": "user", "content": pergunta},
+        ]
+
         await interaction.response.defer(thinking=True)
         try:
-            answer = await client.chat(
-                "Você é o assistente do Aqui Jas. Seja útil, direto e seguro. "
-                "Quando uma ação no Discord for necessária, não finja que a executou.",
-                pergunta,
-            )
+            answer = await client.chat(messages)
         except Exception:
             await interaction.followup.send(
-                "❌ Não consegui consultar a IA configurada neste servidor agora. "
-                "Verifique a chave, o endpoint e o modelo em `/configia`."
+                "❌ Não consegui consultar a IA. Verifique a chave, endpoint e modelo."
             )
             return
 
-        if len(answer) > 1900:
-            answer = answer[:1897] + "..."
-        await interaction.followup.send(answer)
+        await self.bot.db.add_memory(
+            interaction.guild.id, interaction.user.id, "user", pergunta
+        )
+        await self.bot.db.add_memory(
+            interaction.guild.id, interaction.user.id, "assistant", answer
+        )
+
+        await interaction.followup.send(answer[:1900])
 
 
 async def setup(bot: commands.Bot) -> None:
