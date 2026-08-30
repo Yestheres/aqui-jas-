@@ -30,15 +30,29 @@ class V1Admin(commands.Cog):
                 )
                 return
 
-            # Without the privileged member intent, Discord still exposes the
-            # authoritative total member count on Guild. We intentionally do
-            # not pretend to know the human/bot split from an incomplete cache.
-            total_members = guild.member_count or 0
-            cached_members = list(guild.members)
-            cached_humans = sum(1 for member in cached_members if not member.bot)
-            cached_bots = sum(1 for member in cached_members if member.bot)
-            cache_complete = (cached_humans + cached_bots) == total_members
+            # The member cache can be empty without the privileged members
+            # intent. Fetch the guild with counts to obtain an approximate
+            # member total without requesting that privileged intent.
+            try:
+                guild_info = await self.bot.fetch_guild(guild.id, with_counts=True)
+                total_members = (
+                    guild_info.approximate_member_count
+                    or guild.member_count
+                    or len(guild.members)
+                    or 0
+                )
+            except discord.HTTPException:
+                total_members = guild.member_count or len(guild.members)
 
+            # Count bots that are actually known to the cache. For a small
+            # server this normally includes the bot itself. Human count is
+            # derived from the authoritative/approximate total, avoiding a
+            # misleading 0 when the full member cache is unavailable.
+            cached_bots = sum(1 for member in guild.members if member.bot)
+            bots = cached_bots
+            humans = max(0, total_members - bots)
+
+            categories = len(guild.categories)
             text_channels = len(guild.text_channels)
             voice_channels = len(guild.voice_channels)
             forum_channels = len(guild.forums)
@@ -46,20 +60,7 @@ class V1Admin(commands.Cog):
             visible_channels = (
                 text_channels + voice_channels + forum_channels + stage_channels
             )
-            categories = len(guild.categories)
             roles = max(0, len(guild.roles) - 1)
-
-            if cache_complete:
-                community = (
-                    f"👤 Pessoas **{cached_humans}**\n"
-                    f"🤖 Bots **{cached_bots}**\n"
-                    f"📊 Total **{total_members}**"
-                )
-            else:
-                community = (
-                    f"📊 Membros **{total_members}**\n"
-                    "ℹ️ Ative *Server Members Intent* para separar pessoas e bots."
-                )
 
             owner = f"<@{guild.owner_id}>" if guild.owner_id else "Indisponível"
             created = int(guild.created_at.replace(tzinfo=timezone.utc).timestamp())
@@ -79,7 +80,15 @@ class V1Admin(commands.Cog):
             elif self.bot.user:
                 embed.set_thumbnail(url=self.bot.user.display_avatar.url)
 
-            embed.add_field(name="👥 Comunidade", value=community, inline=True)
+            embed.add_field(
+                name="👥 Comunidade",
+                value=(
+                    f"👤 Pessoas **{humans}**\n"
+                    f"🤖 Bots conhecidos **{bots}**\n"
+                    f"📊 Membros **{total_members}**"
+                ),
+                inline=True,
+            )
             embed.add_field(
                 name="💬 Canais",
                 value=(
