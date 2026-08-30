@@ -38,7 +38,9 @@ class AquiJas(commands.Bot):
         await self.load_extension("bot.cogs.core")
         await self.load_extension("bot.cogs.v1_admin")
 
-        # One command scope only: global. Publish the current command set once.
+        # The bot now uses a single application-command scope: global.
+        # Publish the current tree once; legacy guild registrations are removed
+        # separately in on_ready, avoiding duplicate command scopes.
         synced = await self.tree.sync()
         log.info(
             "Published %d global commands: %s",
@@ -57,7 +59,7 @@ class AquiJas(commands.Bot):
                 try:
                     synced = await self.tree.sync(guild=guild)
                     log.info(
-                        "Cleared legacy guild commands for %s (%s); %d guild commands remain",
+                        "Cleared legacy guild commands for %s (%s); %d remain",
                         guild.name,
                         guild.id,
                         len(synced),
