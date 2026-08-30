@@ -7,7 +7,6 @@ import discord
 from discord.ext import commands
 
 from .agent.tools import ToolRegistry
-from .ai.client import AIClient, AIConfig
 from .config import Settings
 from .database import Database
 
@@ -29,15 +28,6 @@ class AquiJas(commands.Bot):
         self.settings = settings
         self.db = Database(settings.database_path)
         self.tools = ToolRegistry()
-        self.ai: AIClient | None = None
-        if settings.ai_api_key and settings.ai_model:
-            self.ai = AIClient(
-                AIConfig(
-                    api_key=settings.ai_api_key,
-                    base_url=settings.ai_base_url,
-                    model=settings.ai_model,
-                )
-            )
 
     async def setup_hook(self) -> None:
         await self.db.connect()
