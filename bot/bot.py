@@ -15,10 +15,10 @@ log = logging.getLogger(__name__)
 
 class AquiJas(commands.Bot):
     def __init__(self, settings: Settings) -> None:
+        # Start with non-privileged intents. Privileged intents are enabled only
+        # when a feature actually needs them and the Discord portal is configured.
         intents = discord.Intents.default()
         intents.guilds = True
-        intents.members = True
-        intents.message_content = True
 
         super().__init__(
             command_prefix=commands.when_mentioned,
