@@ -6,7 +6,6 @@ from collections import defaultdict, deque
 import discord
 from discord.ext import commands
 
-
 SUSPEITO_ROLE_NAME = "Suspeito"
 
 
@@ -23,19 +22,17 @@ class Seguranca(commands.Cog):
             history.popleft()
 
     @staticmethod
-    def _is_call_chat(channel: discord.abc.GuildChannel) -> bool:
+    def _is_call_chat(channel: discord.abc.GuildChannel | discord.Thread) -> bool:
         """Identifica canais de voz/stage e chats de texto associados a uma call."""
         if isinstance(channel, (discord.VoiceChannel, discord.StageChannel)):
             return True
 
-        if not isinstance(channel, discord.TextChannel):
-            return False
+        if isinstance(channel, discord.TextChannel):
+            category = channel.category
+            if category is not None:
+                return any(voice.name == channel.name for voice in category.voice_channels)
 
-        category = channel.category
-        if category is None:
-            return False
-
-        return any(voice.name == channel.name for voice in category.voice_channels)
+        return False
 
     async def _get_suspeito_role(self, guild: discord.Guild) -> discord.Role | None:
         role = discord.utils.get(guild.roles, name=SUSPEITO_ROLE_NAME)
@@ -47,7 +44,6 @@ class Seguranca(commands.Cog):
                 name=SUSPEITO_ROLE_NAME,
                 reason="Sistema de segurança: comportamento suspeito detectado.",
             )
-            print(f"[SEGURANCA] Cargo @{SUSPEITO_ROLE_NAME} criado em {guild.name}.")
             return role
         except (discord.Forbidden, discord.HTTPException) as error:
             print(f"[SEGURANCA] Não foi possível criar @{SUSPEITO_ROLE_NAME}: {error}")
@@ -60,23 +56,13 @@ class Seguranca(commands.Cog):
             return
 
         bot_member = guild.me
-        if bot_member is None:
-            return
-
-        if role >= bot_member.top_role:
-            print(
-                f"[SEGURANCA] @{SUSPEITO_ROLE_NAME} está acima do maior cargo do bot em {guild.name}."
-            )
+        if bot_member is None or role >= bot_member.top_role:
             return
 
         try:
             await member.add_roles(
                 role,
                 reason=f"Comportamento suspeito detectado: {reason}",
-            )
-            print(
-                f"[SEGURANCA] SUSPEITO: {member} ({member.id}) | "
-                f"guild={guild.id} | motivo={reason}"
             )
         except (discord.Forbidden, discord.HTTPException) as error:
             print(f"[SEGURANCA] Não foi possível dar o cargo a {member}: {error}")
@@ -97,7 +83,7 @@ class Seguranca(commands.Cog):
         is_call = self._is_call_chat(message.channel)
         history.append((now, channel_id, is_call))
 
-        # 5 mensagens no mesmo canal em até 1 segundo.
+        # 5 mensagens no mesmo canal em até 1 segundo
         same_channel = [
             item for item in history
             if item[1] == channel_id and now - item[0] <= 1.0
@@ -109,7 +95,7 @@ class Seguranca(commands.Cog):
             )
             return
 
-        # 2 mensagens em canais diferentes em até 1,5 segundo.
+        # 2 mensagens em canais diferentes em até 1,5 segundo
         recent_15 = [item for item in history if now - item[0] <= 1.5]
         different_channels = {item[1] for item in recent_15}
         if len(recent_15) >= 2 and len(different_channels) >= 2:
@@ -119,7 +105,7 @@ class Seguranca(commands.Cog):
             )
             return
 
-        # 2 mensagens em chats de call em até 2 segundos.
+        # 2 mensagens em chats de call em até 2 segundos
         recent_call = [
             item for item in history
             if item[2] and now - item[0] <= 2.0
@@ -130,3 +116,7 @@ class Seguranca(commands.Cog):
                 "2 mensagens em chats de call em até 2 segundos",
             )
             return
+
+
+async def setup(bot: commands.Bot) -> None:
+    await bot.add_cog(Seguranca(bot))
