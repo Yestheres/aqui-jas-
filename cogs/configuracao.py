@@ -1,8 +1,47 @@
+```python
 from __future__ import annotations
+
+import sqlite3
+from pathlib import Path
 
 import discord
 from discord import app_commands
 from discord.ext import commands
+
+
+DATA_DIR = Path("data")
+DB_PATH = DATA_DIR / "aqui_jas.sqlite3"
+
+
+def set_staff_channel(guild_id: int, channel_id: int) -> None:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS guild_settings (
+                guild_id INTEGER PRIMARY KEY,
+                partnership_channel_id INTEGER,
+                staff_channel_id INTEGER
+            )
+            """
+        )
+
+        conn.execute(
+            """
+            INSERT INTO guild_settings (
+                guild_id,
+                staff_channel_id
+            )
+            VALUES (?, ?)
+            ON CONFLICT(guild_id)
+            DO UPDATE SET
+                staff_channel_id=excluded.staff_channel_id
+            """,
+            (guild_id, channel_id),
+        )
+
+        conn.commit()
 
 
 class Configuracao(commands.Cog):
@@ -18,12 +57,15 @@ class Configuracao(commands.Cog):
     @app_commands.describe(
         canal="Canal onde a staff receberá as solicitações de parceria."
     )
-    @app_commands.default_permissions(manage_guild=True)
+    @app_commands.default_permissions(
+        manage_guild=True
+    )
     async def configurar(
         self,
         interaction: discord.Interaction,
         canal: discord.TextChannel,
     ) -> None:
+
         if interaction.guild is None:
             await interaction.response.send_message(
                 "❌ Esse comando só funciona em um servidor.",
@@ -32,6 +74,7 @@ class Configuracao(commands.Cog):
             return
 
         member = interaction.user
+
         if not (
             member.id == interaction.guild.owner_id
             or (
@@ -43,26 +86,34 @@ class Configuracao(commands.Cog):
             )
         ):
             await interaction.response.send_message(
-                "❌ Você precisa ser dono do servidor ou ter **Gerenciar Servidor**.",
+                "❌ Você precisa ser dono do servidor ou ter "
+                "**Gerenciar Servidor**.",
                 ephemeral=True,
             )
             return
 
-        # Importado aqui para evitar acoplamento circular com o main.py.
-        from main import set_channel
+        try:
+            set_staff_channel(
+                interaction.guild.id,
+                canal.id,
+            )
 
-        set_channel(
-            interaction.guild.id,
-            "staff_channel_id",
-            canal.id,
-        )
+            await interaction.response.send_message(
+                f"✅ Canal da staff configurado para {canal.mention}.\n\n"
+                "As solicitações feitas com `/parceria` "
+                "serão enviadas para esse canal.",
+                ephemeral=True,
+            )
 
-        await interaction.response.send_message(
-            f"✅ Canal da staff configurado para {canal.mention}.\n\n"
-            "As solicitações feitas com `/parceria` serão enviadas para esse canal.",
-            ephemeral=True,
-        )
+        except Exception:
+            await interaction.response.send_message(
+                "❌ Ocorreu um erro ao salvar a configuração.",
+                ephemeral=True,
+            )
 
 
 async def setup(bot: commands.Bot) -> None:
-    await bot.add_cog(Configuracao(bot))
+    await bot.add_cog(
+        Configuracao(bot)
+    )
+```
