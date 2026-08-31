@@ -36,7 +36,7 @@ def set_staff_channel(guild_id: int, channel_id: int) -> None:
             VALUES (?, ?)
             ON CONFLICT(guild_id)
             DO UPDATE SET
-                staff_channel_id=excluded.staff_channel_id
+                staff_channel_id = excluded.staff_channel_id
             """,
             (guild_id, channel_id),
         )
