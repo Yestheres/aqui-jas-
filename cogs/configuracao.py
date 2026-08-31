@@ -5,14 +5,12 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-
 DATA_DIR = Path("data")
 DB_PATH = DATA_DIR / "aqui_jas.sqlite3"
 
 
 def init_database() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute(
             """
@@ -26,23 +24,15 @@ def init_database() -> None:
         conn.commit()
 
 
-def set_staff_channel(
-    guild_id: int,
-    channel_id: int,
-) -> None:
+def set_staff_channel(guild_id: int, channel_id: int) -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute(
             """
-            INSERT INTO guild_settings (
-                guild_id,
-                staff_channel_id
-            )
+            INSERT INTO guild_settings (guild_id, staff_channel_id)
             VALUES (?, ?)
             ON CONFLICT(guild_id)
-            DO UPDATE SET
-                staff_channel_id = excluded.staff_channel_id
+            DO UPDATE SET staff_channel_id = excluded.staff_channel_id
             """,
             (guild_id, channel_id),
         )
@@ -59,10 +49,7 @@ def can_configure(member: discord.Member) -> bool:
 
 class Configuracao(commands.Cog):
 
-    def __init__(
-        self,
-        bot: commands.Bot,
-    ) -> None:
+    def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
         init_database()
 
@@ -73,15 +60,12 @@ class Configuracao(commands.Cog):
     @app_commands.describe(
         canal="Canal privado onde a staff receberá as solicitações."
     )
-    @app_commands.default_permissions(
-        manage_guild=True
-    )
+    @app_commands.default_permissions(manage_guild=True)
     async def configurar(
         self,
         interaction: discord.Interaction,
         canal: discord.TextChannel,
     ) -> None:
-
         if interaction.guild is None:
             await interaction.response.send_message(
                 "❌ Esse comando só funciona em um servidor.",
@@ -89,44 +73,31 @@ class Configuracao(commands.Cog):
             )
             return
 
-        if not isinstance(
-            interaction.user,
-            discord.Member,
-        ):
+        if not isinstance(interaction.user, discord.Member):
             await interaction.response.send_message(
                 "❌ Não foi possível verificar suas permissões.",
                 ephemeral=True,
             )
             return
 
-        if not can_configure(
-            interaction.user
-        ):
+        if not can_configure(interaction.user):
             await interaction.response.send_message(
-                "❌ Você precisa ser dono do servidor, "
-                "Administrador ou ter **Gerenciar Servidor**.",
+                "❌ Você precisa ser dono do servidor, Administrador ou ter **Gerenciar Servidor**.",
                 ephemeral=True,
             )
             return
 
-        everyone_overwrite = canal.overwrites_for(
-            interaction.guild.default_role
-        )
-
+        everyone_overwrite = canal.overwrites_for(interaction.guild.default_role)
         if everyone_overwrite.view_channel is not False:
             await interaction.response.send_message(
                 "❌ O canal precisa ser **privado**.\n\n"
-                "O cargo `@everyone` não pode visualizar esse canal.",
+                "O cargo `@everyone` não pode ter permissão explícita para visualizar esse canal.",
                 ephemeral=True,
             )
             return
 
         try:
-            set_staff_channel(
-                interaction.guild.id,
-                canal.id,
-            )
-
+            set_staff_channel(interaction.guild.id, canal.id)
         except sqlite3.Error:
             await interaction.response.send_message(
                 "❌ Não consegui salvar a configuração.",
@@ -136,15 +107,10 @@ class Configuracao(commands.Cog):
 
         await interaction.response.send_message(
             f"✅ Canal da staff configurado para {canal.mention}.\n\n"
-            "As solicitações feitas com `/parceria` "
-            "serão enviadas para esse canal.",
+            "As solicitações feitas com `/parceria` serão enviadas para esse canal.",
             ephemeral=True,
         )
 
 
-async def setup(
-    bot: commands.Bot,
-) -> None:
-    await bot.add_cog(
-        Configuracao(bot)
-    )
+async def setup(bot: commands.Bot) -> None:
+    await bot.add_cog(Configuracao(bot))
