@@ -1,4 +1,4 @@
-from __future__ import annotations
+from **future** import annotations
 
 import sqlite3
 from pathlib import Path
@@ -102,11 +102,16 @@ async def configurar(
             ephemeral=True,
         )
 
-    except Exception:
-        await interaction.response.send_message(
-            "❌ Ocorreu um erro ao salvar a configuração.",
-            ephemeral=True,
+    except Exception as error:
+        print(
+            f"Erro ao configurar canal da staff: {error}"
         )
+
+        if not interaction.response.is_done():
+            await interaction.response.send_message(
+                "❌ Ocorreu um erro ao salvar a configuração.",
+                ephemeral=True,
+            )
 ```
 
 async def setup(bot: commands.Bot) -> None:
