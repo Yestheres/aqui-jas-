@@ -161,8 +161,6 @@ class PartnershipBot(commands.Bot):
   try:await member.add_roles(role,reason=f"Detecção automática de comportamento suspeito: {reason}")
   except (discord.Forbidden,discord.HTTPException):logger.exception("Não foi possível atribuir o cargo Suspeito a %s no servidor %s.",member.id,member.guild.id);return
 bot=PartnershipBot()
-@bot.tree.command(name="ping",description="Verifica se o bot está online.")
-async def ping(interaction:discord.Interaction):await interaction.response.send_message(f"🏓 **{bot.user.name if bot.user else 'Bot'}** está online.\n⚡ `{round(bot.latency*1000)} ms`")
 @bot.tree.command(name="sobre",description="Mostra informações sobre o bot.")
 async def sobre(interaction:discord.Interaction):
  e=discord.Embed(title=f"✨ {bot.user.name if bot.user else 'Bot'}",description="Bot Discord leve e modular.",color=discord.Color.blurple())
@@ -227,7 +225,7 @@ async def partnership(interaction:discord.Interaction,descricao:str,link:str):
  bot.database.set_message_id(rid,m.id);await interaction.response.send_message("Sua solicitação foi enviada para a staff e ficará aguardando aprovação.",ephemeral=True)
 @bot.tree.command(name="ajuda",description="Mostra os comandos disponíveis do bot.")
 async def help_command(interaction:discord.Interaction):
- e=discord.Embed(title="Ajuda do bot",description="Comandos disponíveis e como usá-los.",color=discord.Color.blurple());e.add_field(name="/parceria",value="Pode ser usado em qualquer canal do servidor. Informe `descricao` e `link` para enviar uma solicitação à staff.",inline=False);e.add_field(name="/configurar",value="Configura o canal privado de aprovação (staff).",inline=False);e.add_field(name="&parceria",value="Define o canal atual como canal padrão de publicação (staff).",inline=False);e.add_field(name="/ping",value="Verifica a latência do bot.",inline=False);await interaction.response.send_message(embed=e)
+ e=discord.Embed(title="Ajuda do bot",description="Comandos disponíveis e como usá-los.",color=discord.Color.blurple());e.add_field(name="/parceria",value="Pode ser usado em qualquer canal do servidor. Informe `descricao` e `link` para enviar uma solicitação à staff.",inline=False);e.add_field(name="/configurar",value="Configura o canal privado de aprovação (staff).",inline=False);e.add_field(name="&parceria",value="Define o canal atual como canal padrão de publicação (staff).",inline=False);e.add_field(name="&armadilha",value="Configura o canal armadilha e marca automaticamente sinais de spam.",inline=False);e.add_field(name="&desarmadilha",value="Desativa a armadilha e restaura o canal.",inline=False);await interaction.response.send_message(embed=e)
 @bot.command(name="canal-parceria")
 @commands.guild_only()
 @commands.has_guild_permissions(manage_guild=True)
@@ -235,12 +233,130 @@ async def canal_parceria(context:commands.Context[PartnershipBot],canal:discord.
 @bot.command(name="armadilha")
 @commands.guild_only()
 @commands.has_guild_permissions(manage_guild=True)
-async def armadilha(context:commands.Context[PartnershipBot],canal:discord.TextChannel):
- g=context.guild;role=discord.utils.get(g.roles,name=TRAP_ROLE_NAME)
- if role is None:role=await g.create_role(name=TRAP_ROLE_NAME,reason="Configuração da armadilha anti-spam")
- o=canal.overwrites_for(g.default_role);o.view_channel=False;await canal.set_permissions(g.default_role,overwrite=o);await canal.edit(topic=TRAP_TOPIC_MARKER);bot.database.set_trap_config(g.id,role.id,canal.id);await context.reply(f"✅ Armadilha ativada em {canal.mention}. Cargo: {role.mention}")
+async def armadilha(context: commands.Context[PartnershipBot], canal: discord.TextChannel = None):
+    guild = context.guild
+    if guild is None:
+        return
+
+    trap_channel = canal or context.channel
+    if not isinstance(trap_channel, discord.TextChannel):
+        await context.reply("Use o comando dentro de um canal de texto ou mencione um canal.")
+        return
+
+    bot_member = guild.me
+    if bot_member is None:
+        await context.reply("Não consegui verificar minhas permissões neste servidor.")
+        return
+    if not bot_member.guild_permissions.manage_channels:
+        await context.reply("Eu preciso da permissão Gerenciar canais para configurar a armadilha.")
+        return
+    if not bot_member.guild_permissions.manage_roles:
+        await context.reply("Eu preciso da permissão Gerenciar cargos para atribuir o cargo Suspeito.")
+        return
+
+    role = discord.utils.get(guild.roles, name=TRAP_ROLE_NAME)
+    if role is not None and role.managed:
+        await context.reply("O cargo Suspeito é gerenciado por uma integração e não pode ser usado.")
+        return
+
+    try:
+        if role is None:
+            role = await guild.create_role(
+                name=TRAP_ROLE_NAME,
+                mentionable=False,
+                reason="Cargo usado pela armadilha anti-spam.",
+            )
+    except (discord.Forbidden, discord.HTTPException):
+        logger.exception("Não foi possível criar o cargo Suspeito.")
+        await context.reply("Não consegui criar o cargo Suspeito. Verifique a permissão Gerenciar cargos.")
+        return
+
+    if role >= bot_member.top_role:
+        await context.reply("Coloque o cargo Suspeito abaixo do meu maior cargo na lista de cargos do servidor.")
+        return
+
+    try:
+        await trap_channel.set_permissions(
+            guild.default_role,
+            view_channel=False,
+            send_messages=False,
+            reason="Canal configurado como armadilha.",
+        )
+        await trap_channel.set_permissions(
+            role,
+            view_channel=True,
+            send_messages=True,
+            read_message_history=True,
+            reason="Acesso do cargo Suspeito ao canal armadilha.",
+        )
+        await trap_channel.set_permissions(
+            bot_member,
+            view_channel=True,
+            send_messages=True,
+            read_message_history=True,
+            embed_links=True,
+            reason="Acesso do bot ao canal armadilha.",
+        )
+        current_topic = trap_channel.topic or ""
+        if TRAP_TOPIC_MARKER not in current_topic:
+            await trap_channel.edit(topic=f"{TRAP_TOPIC_MARKER}\n{current_topic}".strip()[:1024])
+    except (discord.Forbidden, discord.HTTPException):
+        logger.exception("Não foi possível configurar o canal armadilha.")
+        await context.reply("Não consegui configurar esse canal. Verifique Gerenciar canais e a posição do cargo Suspeito.")
+        return
+
+    bot.database.set_trap_config(guild.id, trap_channel.id, role.id)
+    await context.reply(
+        f"Armadilha configurada em {trap_channel.mention}. Quem atingir os critérios de suspeita receberá {role.mention}."
+    )
+
+
 @bot.command(name="desarmadilha")
 @commands.guild_only()
 @commands.has_guild_permissions(manage_guild=True)
-async def desarmadilha(context:commands.Context[PartnershipBot]):bot.database.clear_trap_config(context.guild.id);await context.reply("✅ Armadilha desativada.")
+async def desarmadilha(context: commands.Context[PartnershipBot], canal: discord.TextChannel = None):
+    guild = context.guild
+    if guild is None:
+        return
+
+    config = bot.database.get_trap_config(guild.id)
+    if config is None:
+        await context.reply("Não há nenhuma armadilha configurada neste servidor.")
+        return
+
+    trap_channel = canal or guild.get_channel(config["channel_id"])
+    if not isinstance(trap_channel, discord.TextChannel):
+        await context.reply("O canal da armadilha não está disponível.")
+        return
+
+    bot_member = guild.me
+    if bot_member is None or not bot_member.guild_permissions.manage_channels:
+        await context.reply("Eu preciso da permissão Gerenciar canais para desativar a armadilha.")
+        return
+
+    role = guild.get_role(config["role_id"])
+    try:
+        await trap_channel.set_permissions(
+            guild.default_role,
+            view_channel=True,
+            send_messages=True,
+            reason="Canal armadilha desativado.",
+        )
+        if role is not None:
+            await trap_channel.set_permissions(
+                role,
+                overwrite=None,
+                reason="Acesso específico da armadilha removido.",
+            )
+        topic = (trap_channel.topic or "").replace(TRAP_TOPIC_MARKER, "").strip()
+        await trap_channel.edit(topic=topic or None)
+    except (discord.Forbidden, discord.HTTPException):
+        logger.exception("Não foi possível desativar o canal armadilha.")
+        await context.reply("Não consegui restaurar as permissões do canal. Verifique Gerenciar canais.")
+        return
+
+    bot.database.clear_trap_config(guild.id)
+    await context.reply(f"Armadilha desativada em {trap_channel.mention}.")
+
+
 if __name__=="__main__":bot.run(TOKEN)
