@@ -5,7 +5,6 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-
 DATA_DIR = Path("data")
 DB_PATH = DATA_DIR / "aqui_jas.sqlite3"
 
@@ -67,7 +66,7 @@ class Configuracao(commands.Cog):
         interaction: discord.Interaction,
         canal: discord.TextChannel,
     ) -> None:
-        # Adia a resposta imediatamente para evitar que estoure o limite de 3 segundos do Discord
+        # Garante resposta rápida ao Discord para evitar o limite de 3 segundos
         await interaction.response.defer(ephemeral=True)
 
         if interaction.guild is None:
