@@ -5,6 +5,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+
 DATA_DIR = Path("data")
 DB_PATH = DATA_DIR / "aqui_jas.sqlite3"
 
@@ -66,22 +67,25 @@ class Configuracao(commands.Cog):
         interaction: discord.Interaction,
         canal: discord.TextChannel,
     ) -> None:
+        # Adia a resposta imediatamente para evitar que estoure o limite de 3 segundos do Discord
+        await interaction.response.defer(ephemeral=True)
+
         if interaction.guild is None:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "❌ Esse comando só funciona em um servidor.",
                 ephemeral=True,
             )
             return
 
         if not isinstance(interaction.user, discord.Member):
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "❌ Não foi possível verificar suas permissões.",
                 ephemeral=True,
             )
             return
 
         if not can_configure(interaction.user):
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "❌ Você precisa ser dono do servidor, Administrador ou ter **Gerenciar Servidor**.",
                 ephemeral=True,
             )
@@ -89,7 +93,7 @@ class Configuracao(commands.Cog):
 
         everyone_overwrite = canal.overwrites_for(interaction.guild.default_role)
         if everyone_overwrite.view_channel is not False:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "❌ O canal precisa ser **privado**.\n\n"
                 "O cargo `@everyone` não pode ter permissão explícita para visualizar esse canal.",
                 ephemeral=True,
@@ -99,13 +103,13 @@ class Configuracao(commands.Cog):
         try:
             set_staff_channel(interaction.guild.id, canal.id)
         except sqlite3.Error:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "❌ Não consegui salvar a configuração.",
                 ephemeral=True,
             )
             return
 
-        await interaction.response.send_message(
+        await interaction.followup.send(
             f"✅ Canal da staff configurado para {canal.mention}.\n\n"
             "As solicitações feitas com `/parceria` serão enviadas para esse canal.",
             ephemeral=True,
