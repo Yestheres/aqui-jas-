@@ -143,6 +143,43 @@ class Database:
             connection.execute(
                 "UPDATE partnership_requests SET status='pending', awaiting_channel=0 WHERE status='approving'"
             )
+
+            # If an older version already created duplicate pending requests,
+            # keep the oldest one and close the newer duplicates as rejected.
+            # This preserves the records instead of silently deleting them.
+            connection.execute(
+                """
+                UPDATE partnership_requests
+                SET status = 'rejected',
+                    awaiting_channel = 0,
+                    reviewed_by = 'system:duplicate_cleanup'
+                WHERE id IN (
+                    SELECT id
+                    FROM (
+                        SELECT
+                            id,
+                            ROW_NUMBER() OVER (
+                                PARTITION BY guild_id, requester_id
+                                ORDER BY id ASC
+                            ) AS row_number
+                        FROM partnership_requests
+                        WHERE status IN ('pending', 'publishing')
+                    )
+                    WHERE row_number > 1
+                )
+                """
+            )
+
+            # Database-level protection against duplicate active requests.
+            # A user may have only one pending/publishing partnership per server.
+            connection.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS
+                    idx_partnership_one_active_per_user
+                ON partnership_requests (guild_id, requester_id)
+                WHERE status IN ('pending', 'publishing')
+                """
+            )
             connection.commit()
 
     def set_approval_channel(self, guild_id: int, channel_id: int) -> None:
@@ -242,17 +279,44 @@ class Database:
         requester_id: int,
         description: str,
         link: str,
-    ) -> int:
+    ) -> int | None:
+        # BEGIN IMMEDIATE serializes the check + insert. This closes the race
+        # where two nearly simultaneous /parceria interactions both saw no
+        # pending request and then both inserted one.
         with self._connect() as connection:
-            cursor = connection.execute(
+            connection.execute("BEGIN IMMEDIATE")
+
+            existing = connection.execute(
                 """
-                INSERT INTO partnership_requests
-                    (guild_id, requester_id, description, link)
-                VALUES (?, ?, ?, ?)
+                SELECT id
+                FROM partnership_requests
+                WHERE guild_id = ?
+                  AND requester_id = ?
+                  AND status IN ('pending', 'publishing')
+                LIMIT 1
                 """,
-                (str(guild_id), str(requester_id), description, link),
-            )
-            return int(cursor.lastrowid)
+                (str(guild_id), str(requester_id)),
+            ).fetchone()
+            if existing is not None:
+                connection.rollback()
+                return None
+
+            try:
+                cursor = connection.execute(
+                    """
+                    INSERT INTO partnership_requests
+                        (guild_id, requester_id, description, link)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (str(guild_id), str(requester_id), description, link),
+                )
+            except sqlite3.IntegrityError:
+                connection.rollback()
+                return None
+
+            request_id = int(cursor.lastrowid)
+            connection.commit()
+            return request_id
 
     def set_message_id(self, request_id: int, message_id: int) -> None:
         with self._connect() as connection:
