@@ -63,14 +63,25 @@ def create_request(guild_id: int, user_id: int, description: str, invite_url: st
         return int(cur.lastrowid)
 
 
-def decide_request(request_id: int, status: str) -> sqlite3.Row | None:
-    if status not in {"approved", "rejected"}:
+def claim_request(request_id: int) -> sqlite3.Row | None:
+    with db() as conn:
+        cur = conn.execute("UPDATE partnership_requests SET status='approving' WHERE id=? AND status='pending'", (request_id,))
+        if cur.rowcount != 1:
+            return None
+        row = conn.execute("SELECT * FROM partnership_requests WHERE id=?", (request_id,)).fetchone()
+        conn.commit()
+        return row
+
+
+def finish_request(request_id: int, status: str) -> sqlite3.Row | None:
+    if status not in {"approved", "rejected", "pending"}:
         raise ValueError("status inválido")
     with db() as conn:
-        row = conn.execute("SELECT * FROM partnership_requests WHERE id=? AND status='pending'", (request_id,)).fetchone()
+        row = conn.execute("SELECT * FROM partnership_requests WHERE id=? AND status IN ('pending','approving')", (request_id,)).fetchone()
         if row is None:
             return None
-        conn.execute("UPDATE partnership_requests SET status=?, decided_at=? WHERE id=?", (status, datetime.now(timezone.utc).isoformat(), request_id))
+        decided_at = None if status == "pending" else datetime.now(timezone.utc).isoformat()
+        conn.execute("UPDATE partnership_requests SET status=?, decided_at=? WHERE id=?", (status, decided_at, request_id))
         conn.commit()
         return row
 
@@ -117,13 +128,11 @@ class DecisionView(discord.ui.View):
         await self.finish(interaction, False)
 
     async def finish(self, interaction: discord.Interaction, approved: bool) -> None:
-        row = decide_request(self.request_id, "approved" if approved else "rejected")
-        if row is None:
-            await interaction.response.send_message("Essa solicitação já foi decidida.", ephemeral=True)
-            return
-        if not approved:
-            await interaction.response.send_message("❌ Parceria recusada.", ephemeral=True)
-        else:
+        if approved:
+            row = claim_request(self.request_id)
+            if row is None:
+                await interaction.response.send_message("Essa solicitação já foi decidida ou está sendo processada.", ephemeral=True)
+                return
             settings = get_settings(int(row["guild_id"]))
             channel_id = settings["partnership_channel_id"] if settings else None
             destination = bot.get_channel(int(channel_id)) if channel_id else None
@@ -133,6 +142,7 @@ class DecisionView(discord.ui.View):
                 except discord.HTTPException:
                     destination = None
             if not isinstance(destination, discord.TextChannel):
+                finish_request(self.request_id, "pending")
                 await interaction.response.send_message("❌ Canal de parceria não está disponível.", ephemeral=True)
                 return
             embed = discord.Embed(title="🤝 Nova parceria", description=str(row["description"]), color=discord.Color.green(), timestamp=datetime.now(timezone.utc))
@@ -141,9 +151,17 @@ class DecisionView(discord.ui.View):
             try:
                 await destination.send(embed=embed)
             except discord.HTTPException:
-                await interaction.response.send_message("❌ Não consegui publicar a parceria.", ephemeral=True)
+                finish_request(self.request_id, "pending")
+                await interaction.response.send_message("❌ Não consegui publicar a parceria. A solicitação voltou para pendente.", ephemeral=True)
                 return
+            finish_request(self.request_id, "approved")
             await interaction.response.send_message("✅ Parceria aprovada e publicada.", ephemeral=True)
+        else:
+            row = finish_request(self.request_id, "rejected")
+            if row is None:
+                await interaction.response.send_message("Essa solicitação já foi decidida.", ephemeral=True)
+                return
+            await interaction.response.send_message("❌ Parceria recusada.", ephemeral=True)
         if interaction.message:
             embed = interaction.message.embeds[0].copy() if interaction.message.embeds else discord.Embed(title="Solicitação de parceria")
             embed.color = discord.Color.green() if approved else discord.Color.red()
@@ -167,12 +185,12 @@ class AquiJas(commands.Bot):
 
     async def setup_hook(self) -> None:
         init_db()
-        synced = await self.tree.sync()
-        log.info("Sincronizados %d comandos globais: %s", len(synced), ", ".join(c.name for c in synced))
         with db() as conn:
             pending = conn.execute("SELECT id FROM partnership_requests WHERE status='pending'").fetchall()
         for row in pending:
             self.add_view(DecisionView(int(row["id"])))
+        synced = await self.tree.sync()
+        log.info("Sincronizados %d comandos globais: %s", len(synced), ", ".join(c.name for c in synced))
 
     async def on_ready(self) -> None:
         if self.user is None:
@@ -180,7 +198,6 @@ class AquiJas(commands.Bot):
         await self.change_presence(status=discord.Status.online, activity=discord.Activity(type=discord.ActivityType.watching, name="/ajuda • seu servidor"))
         log.info("Online como %s (%s)", self.user, self.user.id)
         log.info("Conectado a %d servidor(es)", len(self.guilds))
-        log.info("Message Content Intent: %s", self.intents.message_content)
 
     async def on_command_error(self, ctx: commands.Context, error: commands.CommandError) -> None:
         if not isinstance(error, commands.CommandNotFound):
@@ -200,7 +217,6 @@ async def prefix_parceria(ctx: commands.Context) -> None:
     except discord.HTTPException:
         pass
     await ctx.send("✅ Este canal foi definido como **canal de parcerias**.", delete_after=5)
-    log.info("Canal de parceria definido: guild=%s channel=%s", ctx.guild.id, ctx.channel.id)
 
 
 @bot.command(name="perguntar")
@@ -213,7 +229,6 @@ async def prefix_perguntar(ctx: commands.Context) -> None:
     except discord.HTTPException:
         pass
     await ctx.send("✅ Este canal foi definido como **canal da staff**.", delete_after=5)
-    log.info("Canal staff definido: guild=%s channel=%s", ctx.guild.id, ctx.channel.id)
 
 
 @bot.tree.command(name="ping", description="Verifica se o bot está online.")
@@ -288,7 +303,7 @@ async def slash_parceria(interaction: discord.Interaction, descricao: app_comman
     try:
         await staff_channel.send(embed=embed, view=DecisionView(request_id))
     except discord.HTTPException:
-        decide_request(request_id, "rejected")
+        finish_request(request_id, "rejected")
         await interaction.edit_original_response(content="❌ Não consegui enviar a solicitação para a staff.")
         return
     await interaction.edit_original_response(content="✅ Solicitação enviada para a staff. Aguarde a análise.")
