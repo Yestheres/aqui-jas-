@@ -420,6 +420,22 @@ class Database:
                 (str(guild_id), str(requester_id), keep_request_id),
             )
 
+    def reset_pending_request_for_deleted_message(self, message_id: int) -> bool:
+        """Release a pending request when its staff message no longer exists."""
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE partnership_requests
+                SET status = 'rejected',
+                    awaiting_channel = 0,
+                    reviewed_by = COALESCE(reviewed_by, 'system-message-deleted')
+                WHERE approval_message_id = ?
+                  AND status = 'pending'
+                """,
+                (str(message_id),),
+            )
+            return cursor.rowcount == 1
+
     def review_request(
         self,
         request_id: int,
