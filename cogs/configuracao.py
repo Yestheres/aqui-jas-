@@ -100,7 +100,9 @@ async def configurar(
         )
 
     except Exception as error:
-        print(f"Erro ao configurar canal da staff: {error}")
+        print(
+            f"Erro ao configurar canal da staff: {error}"
+        )
 
         if not interaction.response.is_done():
             await interaction.response.send_message(
@@ -110,4 +112,6 @@ async def configurar(
 ```
 
 async def setup(bot: commands.Bot) -> None:
-await bot.add_cog(Configuracao(bot))
+await bot.add_cog(
+Configuracao(bot)
+)
