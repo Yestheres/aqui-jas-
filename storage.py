@@ -36,7 +36,6 @@ class Database:
 
     def initialize(self) -> None:
         with self._connect() as connection:
-            # Richer configuration schema used by the merged bot.
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS guild_config (
@@ -50,7 +49,6 @@ class Database:
                 """
             )
 
-            # Migrate the previous GitHub configuration without deleting it.
             if self._columns(connection, "guild_settings"):
                 connection.execute(
                     """
@@ -82,8 +80,6 @@ class Database:
                     """
                 )
 
-            # The old GitHub partnership table had NOT NULL user_id/invite_url
-            # fields. Rename it once, create the richer table, and copy all rows.
             request_columns = self._columns(connection, "partnership_requests")
             if request_columns and "requester_id" not in request_columns:
                 connection.execute(
@@ -127,7 +123,6 @@ class Database:
                     """
                 )
 
-            # Make partially migrated databases safe too.
             self._ensure_column(connection, "partnership_requests", "approval_message_id", "TEXT")
             self._ensure_column(
                 connection,
@@ -139,43 +134,38 @@ class Database:
             self._ensure_column(connection, "partnership_requests", "published_message_id", "TEXT")
             self._ensure_column(connection, "partnership_requests", "reviewed_by", "TEXT")
 
-            # A restart/crash must never leave a request permanently locked.
+            # Recover requests that were in the middle of a review when the bot
+            # was restarted. They become pending again instead of being stuck.
             connection.execute(
                 "UPDATE partnership_requests SET status='pending', awaiting_channel=0 WHERE status='approving'"
             )
 
-            # If an older version already created duplicate pending requests,
-            # keep the oldest one and close the newer duplicates as rejected.
-            # This preserves the records instead of silently deleting them.
+            # Remove historical duplicates before creating the invariant below.
+            # We preserve every row; only newer duplicate active requests are
+            # marked rejected.
             connection.execute(
                 """
                 UPDATE partnership_requests
                 SET status = 'rejected',
-                    awaiting_channel = 0,
-                    reviewed_by = 'system:duplicate_cleanup'
+                    reviewed_by = COALESCE(reviewed_by, 'system-duplicate-cleanup')
                 WHERE id IN (
-                    SELECT id
-                    FROM (
-                        SELECT
-                            id,
-                            ROW_NUMBER() OVER (
-                                PARTITION BY guild_id, requester_id
-                                ORDER BY id ASC
-                            ) AS row_number
-                        FROM partnership_requests
-                        WHERE status IN ('pending', 'publishing')
-                    )
-                    WHERE row_number > 1
+                    SELECT newer.id
+                    FROM partnership_requests AS newer
+                    JOIN partnership_requests AS older
+                      ON older.guild_id = newer.guild_id
+                     AND older.requester_id = newer.requester_id
+                     AND older.status IN ('pending', 'publishing')
+                     AND newer.status IN ('pending', 'publishing')
+                     AND older.id < newer.id
                 )
                 """
             )
 
-            # Database-level protection against duplicate active requests.
-            # A user may have only one pending/publishing partnership per server.
+            # One active partnership request per user/server. Partial indexes
+            # keep approved/rejected history intact.
             connection.execute(
                 """
-                CREATE UNIQUE INDEX IF NOT EXISTS
-                    idx_partnership_one_active_per_user
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_one_active_partnership
                 ON partnership_requests (guild_id, requester_id)
                 WHERE status IN ('pending', 'publishing')
                 """
@@ -317,6 +307,22 @@ class Database:
             request_id = int(cursor.lastrowid)
             connection.commit()
             return request_id
+
+    def get_active_request(self, guild_id: int, requester_id: int) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT *
+                FROM partnership_requests
+                WHERE guild_id = ?
+                  AND requester_id = ?
+                  AND status IN ('pending', 'publishing')
+                ORDER BY id ASC
+                LIMIT 1
+                """,
+                (str(guild_id), str(requester_id)),
+            ).fetchone()
+        return dict(row) if row else None
 
     def set_message_id(self, request_id: int, message_id: int) -> None:
         with self._connect() as connection:
