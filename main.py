@@ -551,6 +551,11 @@ class AquiJas(commands.Bot):
             "on_message",
         )
 
+        # Carrega o Cog de configuração.
+        await self.load_extension(
+            "cogs.configuracao"
+        )
+
         with db() as conn:
             pending = conn.execute(
                 """
@@ -652,52 +657,6 @@ async def prefix_parceria(
         "✅ Este canal foi definido como "
         "**canal de parcerias**.",
         delete_after=5,
-    )
-
-
-@bot.tree.command(
-    name="configurar",
-    description="Configura o canal da staff para receber solicitações.",
-)
-@app_commands.describe(
-    canal="Canal onde a staff receberá as solicitações de parceria."
-)
-@app_commands.default_permissions(
-    manage_guild=True
-)
-async def configurar(
-    interaction: discord.Interaction,
-    canal: discord.TextChannel,
-) -> None:
-
-    if interaction.guild is None:
-        await interaction.response.send_message(
-            "❌ Esse comando só funciona em um servidor.",
-            ephemeral=True,
-        )
-
-        return
-
-    if not can_manage(
-        interaction.guild,
-        interaction.user,
-    ):
-        await interaction.response.send_message(
-            "❌ Você precisa ser dono do servidor "
-            "ou ter **Gerenciar Servidor**.",
-            ephemeral=True,
-        )
-
-        return
-
-    set_channel(
-        interaction.guild.id,
-        "staff_channel_id",
-        canal.id,
-    )
-
-    await interaction.response.send_message(
-        f"✅ Canal da staff configurado para {canal.mention}."
     )
 
 
