@@ -224,6 +224,12 @@ async def partnership(interaction:discord.Interaction,descricao:str,link:str):
   except (discord.NotFound,discord.Forbidden,discord.HTTPException):c=None
  if not isinstance(c,discord.TextChannel):await interaction.response.send_message("O canal privado configurado não está disponível. A staff deve escolher outro canal.",ephemeral=True);return
  if c.permissions_for(interaction.guild.default_role).view_channel:await interaction.response.send_message("O canal de aprovação precisa ser privado: o cargo @everyone não pode conseguir visualizá-lo.",ephemeral=True);return
+ active=bot.database.get_active_request(interaction.guild.id,interaction.user.id)
+ if active and active["approval_message_id"]:
+  try:await c.fetch_message(int(active["approval_message_id"]))
+  except discord.NotFound:
+   bot.database.reset_pending_request_for_deleted_message(int(active["approval_message_id"]))
+   logger.info("Solicitação antiga resetada ao detectar mensagem de aprovação excluída: #%s.",active["approval_message_id"])
  rid=bot.database.create_request(interaction.guild.id,interaction.user.id,d,l)
  if rid is None:
   active=bot.database.get_active_request(interaction.guild.id,interaction.user.id)
