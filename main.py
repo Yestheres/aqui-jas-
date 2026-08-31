@@ -156,6 +156,13 @@ class PartnershipBot(commands.Bot):
    reason=self.suspicion_tracker.record(message.guild.id,message.author.id,message.content)
    if reason:await self.mark_suspicious(message.author,reason)
   await self.process_commands(message)
+ async def on_raw_message_delete(self,payload:discord.RawMessageDeleteEvent):
+  if self.database.reset_pending_request_for_deleted_message(payload.message_id):
+   logger.info("Solicitação pendente resetada após exclusão da mensagem de aprovação #%s.",payload.message_id)
+ async def on_raw_bulk_message_delete(self,payload:discord.RawBulkMessageDeleteEvent):
+  for message_id in payload.message_ids:
+   if self.database.reset_pending_request_for_deleted_message(message_id):
+    logger.info("Solicitação pendente resetada após exclusão em massa da mensagem de aprovação #%s.",message_id)
  async def mark_suspicious(self,member:discord.Member,reason:str):
   cfg=self.database.get_trap_config(member.guild.id)
   if cfg is None:return
