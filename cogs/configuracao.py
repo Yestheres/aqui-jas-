@@ -1,5 +1,3 @@
-from **future** import annotations
-
 import sqlite3
 from pathlib import Path
 
@@ -43,7 +41,6 @@ with sqlite3.connect(DB_PATH) as conn:
 ```
 
 class Configuracao(commands.Cog):
-"""Comandos de configuração do servidor."""
 
 ```
 def __init__(self, bot: commands.Bot) -> None:
@@ -103,9 +100,7 @@ async def configurar(
         )
 
     except Exception as error:
-        print(
-            f"Erro ao configurar canal da staff: {error}"
-        )
+        print(f"Erro ao configurar canal da staff: {error}")
 
         if not interaction.response.is_done():
             await interaction.response.send_message(
