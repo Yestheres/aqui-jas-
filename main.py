@@ -11,6 +11,7 @@ from pathlib import Path
 import discord
 from discord import app_commands
 from discord.ext import commands
+from cogs.seguranca import Seguranca
 
 TOKEN = os.getenv("DISCORD_TOKEN", "").strip()
 if not TOKEN:
@@ -185,6 +186,9 @@ class AquiJas(commands.Bot):
 
     async def setup_hook(self) -> None:
         init_db()
+        seguranca = Seguranca(self)
+        self.add_listener(seguranca.on_message, "on_message")
+
         with db() as conn:
             pending = conn.execute("SELECT id FROM partnership_requests WHERE status='pending'").fetchall()
         for row in pending:
