@@ -73,17 +73,19 @@ class StaffView(discord.ui.View):
 class ApprovalView(StaffView):
  @discord.ui.button(label="Permitir parceria",style=discord.ButtonStyle.success,custom_id="partnership:approve")
  async def approve(self,interaction:discord.Interaction,_button:discord.ui.Button[ApprovalView])->None:
+  await interaction.response.defer()
   r=self.bot.database.get_request(self.request_id)
-  if not r or r["status"]!="pending":await interaction.response.send_message("Essa solicitação já foi revisada ou está sendo publicada.",ephemeral=True);return
-  if not self.bot.database.set_awaiting_channel(self.request_id,True):await interaction.response.send_message("Essa solicitação já está sendo revisada por outra pessoa.",ephemeral=True);return
+  if not r or r["status"]!="pending":await interaction.followup.send("Essa solicitação já foi revisada ou está sendo publicada.",ephemeral=True);return
+  if not self.bot.database.set_awaiting_channel(self.request_id,True):await interaction.followup.send("Essa solicitação já está sendo revisada por outra pessoa.",ephemeral=True);return
   d=self.bot.database.get_publication_channel(interaction.guild.id if interaction.guild else 0);text=f"O canal padrão atual é <#{d}>. Escolha um canal abaixo para publicar esta parceria." if d else "Escolha o canal onde a embed desta parceria será publicada."
-  await interaction.response.edit_message(content=text,embed=partnership_embed(r),view=PublicationChannelView(self.bot,self.request_id))
+  await interaction.edit_original_response(content=text,embed=partnership_embed(r),view=PublicationChannelView(self.bot,self.request_id))
  @discord.ui.button(label="Recusar parceria",style=discord.ButtonStyle.danger,custom_id="partnership:reject")
  async def reject(self,interaction:discord.Interaction,_button:discord.ui.Button[ApprovalView])->None:
+  await interaction.response.defer()
   if not isinstance(interaction.user,discord.Member):return
   ok=self.bot.database.review_request(self.request_id,"rejected",interaction.user.id);r=self.bot.database.get_request(self.request_id)
-  if not ok or not r:await interaction.response.send_message("Essa solicitação já foi revisada por outra pessoa.",ephemeral=True);return
-  self.disable_components();await interaction.response.edit_message(content="Solicitação recusada pela staff.",embed=partnership_embed(r),view=self)
+  if not ok or not r:await interaction.followup.send("Essa solicitação já foi revisada por outra pessoa.",ephemeral=True);return
+  self.disable_components();await interaction.edit_original_response(content="Solicitação recusada pela staff.",embed=partnership_embed(r),view=self)
 class PublicationChannelView(StaffView):
  def __init__(self,bot:PartnershipBot,request_id:int):
   super().__init__(bot,request_id);r=bot.database.get_request(request_id);d=bot.database.get_publication_channel(int(r["guild_id"])) if r else None
@@ -91,12 +93,12 @@ class PublicationChannelView(StaffView):
    if isinstance(c,discord.ui.Button) and c.custom_id=="partnership:use-default":c.disabled=d is None
  async def _publish_to_channel(self,interaction:discord.Interaction,channel:discord.abc.GuildChannel)->None:
   if not interaction.guild:return
-  if not isinstance(channel,discord.TextChannel):await interaction.response.send_message("Selecione um canal de texto válido.",ephemeral=True);return
+  if not isinstance(channel,discord.TextChannel):await interaction.followup.send("Selecione um canal de texto válido.",ephemeral=True);return
   m=interaction.guild.me
   if m:
    p=channel.permissions_for(m)
-   if not(p.view_channel and p.send_messages and p.embed_links):await interaction.response.send_message("Eu preciso de **Ver canal**, **Enviar mensagens** e **Inserir links** no canal escolhido.",ephemeral=True);return
-  await interaction.response.defer();r=self.bot.database.get_request(self.request_id)
+   if not(p.view_channel and p.send_messages and p.embed_links):await interaction.followup.send("Eu preciso de **Ver canal**, **Enviar mensagens** e **Inserir links** no canal escolhido.",ephemeral=True);return
+  r=self.bot.database.get_request(self.request_id)
   if not r or r["status"]!="pending":await interaction.followup.send("Essa solicitação já foi revisada ou está sendo publicada.",ephemeral=True);return
   preview=await fetch_invite_preview(self.bot,r["link"])
   if preview is None:await interaction.followup.send("O convite do Discord está inválido, expirado ou não é permanente. A solicitação continua pendente.",ephemeral=True);return
@@ -111,30 +113,33 @@ class PublicationChannelView(StaffView):
   await interaction.followup.send(f"Parceria aprovada e publicada em {channel.mention}. Esse canal agora é o padrão para as próximas aprovações.",ephemeral=True)
  @discord.ui.select(cls=discord.ui.ChannelSelect,channel_types=[discord.ChannelType.text],placeholder="Selecione o canal para publicar a parceria",min_values=1,max_values=1,custom_id="partnership:publication-channel")
  async def choose_channel(self,interaction:discord.Interaction,select:discord.ui.ChannelSelect[PublicationChannelView])->None:
+  await interaction.response.defer()
   if not interaction.guild:return
   s=select.values[0];c=s.resolve()
   if c is None:
    try:c=await s.fetch()
    except (discord.NotFound,discord.Forbidden,discord.HTTPException):c=None
-  if c is None:await interaction.response.send_message("Não consegui carregar o canal selecionado. Tente novamente.",ephemeral=True);return
+   if c is None:await interaction.followup.send("Não consegui carregar o canal selecionado. Tente novamente.",ephemeral=True);return
   await self._publish_to_channel(interaction,c)
  @discord.ui.button(label="Usar canal padrão",style=discord.ButtonStyle.primary,custom_id="partnership:use-default")
  async def use_default(self,interaction:discord.Interaction,_button:discord.ui.Button[PublicationChannelView])->None:
+  await interaction.response.defer()
   if not interaction.guild:return
   d=self.bot.database.get_publication_channel(interaction.guild.id)
-  if d is None:await interaction.response.send_message("Ainda não existe um canal padrão. Use o seletor para escolher um.",ephemeral=True);return
+  if d is None:await interaction.followup.send("Ainda não existe um canal padrão. Use o seletor para escolher um.",ephemeral=True);return
   c=interaction.guild.get_channel(d)
   if c is None:
    try:c=await self.bot.fetch_channel(d)
    except (discord.NotFound,discord.Forbidden,discord.HTTPException):c=None
-  if not isinstance(c,discord.TextChannel):await interaction.response.send_message("O canal padrão não está disponível. Escolha outro canal no seletor.",ephemeral=True);return
+   if not isinstance(c,discord.TextChannel):await interaction.followup.send("O canal padrão não está disponível. Escolha outro canal no seletor.",ephemeral=True);return
   await self._publish_to_channel(interaction,c)
  @discord.ui.button(label="Voltar",style=discord.ButtonStyle.secondary,custom_id="partnership:publication-back")
  async def back(self,interaction:discord.Interaction,_button:discord.ui.Button[PublicationChannelView])->None:
-  if not self.bot.database.set_awaiting_channel(self.request_id,False):await interaction.response.send_message("Essa solicitação não está mais pendente.",ephemeral=True);return
+  await interaction.response.defer()
+  if not self.bot.database.set_awaiting_channel(self.request_id,False):await interaction.followup.send("Essa solicitação não está mais pendente.",ephemeral=True);return
   r=self.bot.database.get_request(self.request_id)
-  if not r:await interaction.response.send_message("Não encontrei essa solicitação.",ephemeral=True);return
-  await interaction.response.edit_message(content="Nova solicitação de parceria aguardando decisão da staff.",embed=partnership_embed(r),view=ApprovalView(self.bot,self.request_id))
+  if not r:await interaction.followup.send("Não encontrei essa solicitação.",ephemeral=True);return
+  await interaction.edit_original_response(content="Nova solicitação de parceria aguardando decisão da staff.",embed=partnership_embed(r),view=ApprovalView(self.bot,self.request_id))
 class PartnershipBot(commands.Bot):
  def __init__(self):
   i=discord.Intents.default();i.message_content=True;super().__init__(command_prefix=commands.when_mentioned_or("&","#"),intents=i);self.database=Database();self.suspicion_tracker=SuspicionTracker()
