@@ -548,7 +548,7 @@ class PartnershipBot(commands.Bot):
     def __init__(self) -> None:
         intents = discord.Intents.default()
         intents.message_content = True
-        super().__init__(command_prefix="&", intents=intents)
+        super().__init__(command_prefix=commands.when_mentioned_or("&", "#"), intents=intents)
         self.database = Database()
         self.suspicion_tracker = SuspicionTracker()
 
@@ -646,6 +646,84 @@ class PartnershipBot(commands.Bot):
 
 
 bot = PartnershipBot()
+
+
+@bot.tree.command(name="ping", description="Verifica se o bot está online.")
+async def ping(interaction: discord.Interaction) -> None:
+    await interaction.response.send_message(
+        f"🏓 **{bot.user.name if bot.user else 'Bot'}** está online.\n⚡ `{round(bot.latency * 1000)} ms`"
+    )
+
+
+@bot.tree.command(name="sobre", description="Mostra informações sobre o bot.")
+async def sobre(interaction: discord.Interaction) -> None:
+    embed = discord.Embed(
+        title=f"✨ {bot.user.name if bot.user else 'Bot'}",
+        description="Bot Discord leve e modular.",
+        color=discord.Color.blurple(),
+    )
+    if bot.user:
+        embed.set_thumbnail(url=bot.user.display_avatar.url)
+    embed.add_field(name="🏠 Servidores", value=f"`{len(bot.guilds)}`", inline=True)
+    embed.add_field(name="📦 discord.py", value=f"`{discord.__version__}`", inline=True)
+    await interaction.response.send_message(embed=embed)
+
+
+@bot.tree.command(name="servidor", description="Mostra informações básicas deste servidor.")
+async def servidor(interaction: discord.Interaction) -> None:
+    if interaction.guild is None:
+        await interaction.response.send_message("Esse comando só funciona em um servidor.", ephemeral=True)
+        return
+    guild = interaction.guild
+    embed = discord.Embed(title=f"🏠 {guild.name}", color=discord.Color.blurple())
+    if guild.icon:
+        embed.set_thumbnail(url=guild.icon.url)
+    embed.add_field(name="👥 Membros", value=f"`{guild.member_count or 'indisponível'}`", inline=True)
+    embed.add_field(name="💬 Canais", value=f"`{len(guild.channels)}`", inline=True)
+    embed.add_field(name="🎭 Cargos", value=f"`{max(0, len(guild.roles) - 1)}`", inline=True)
+    await interaction.response.send_message(embed=embed)
+
+
+@bot.tree.command(name="configurar", description="Configura o canal privado da staff.")
+@app_commands.describe(canal="Canal privado onde a staff receberá as solicitações.")
+@app_commands.default_permissions(manage_guild=True)
+async def configurar(interaction: discord.Interaction, canal: discord.TextChannel) -> None:
+    if interaction.guild is None or not isinstance(interaction.user, discord.Member):
+        await interaction.response.send_message("Esse comando só funciona em um servidor.", ephemeral=True)
+        return
+    permissions = interaction.user.guild_permissions
+    if interaction.user.id != interaction.guild.owner_id and not (permissions.administrator or permissions.manage_guild):
+        await interaction.response.send_message("❌ Você precisa ser dono do servidor, Administrador ou ter **Gerenciar Servidor**.", ephemeral=True)
+        return
+    everyone = canal.overwrites_for(interaction.guild.default_role)
+    if everyone.view_channel is not False:
+        await interaction.response.send_message("❌ O canal precisa ser **privado**: negue **Ver canal** para @everyone.", ephemeral=True)
+        return
+    bot.database.set_approval_channel(interaction.guild.id, canal.id)
+    await interaction.response.send_message(f"✅ Canal da staff configurado para {canal.mention}.", ephemeral=True)
+
+
+@bot.command(name="parceria")
+@commands.guild_only()
+@commands.has_guild_permissions(manage_guild=True)
+async def prefix_publication_channel(context: commands.Context[PartnershipBot]) -> None:
+    if not context.guild:
+        return
+    channel = context.channel
+    if not isinstance(channel, discord.TextChannel):
+        return
+    bot_member = context.guild.me
+    if bot_member is not None:
+        permissions = channel.permissions_for(bot_member)
+        if not (permissions.view_channel and permissions.send_messages and permissions.embed_links):
+            await context.reply("Eu preciso de **Ver canal**, **Enviar mensagens** e **Inserir links** nesse canal.")
+            return
+    bot.database.set_publication_channel(context.guild.id, channel.id)
+    try:
+        await context.message.delete()
+    except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+        pass
+    await context.send("✅ Este canal foi definido como **canal de publicação de parcerias**.", delete_after=5)
 
 
 @bot.tree.command(
@@ -769,23 +847,27 @@ async def help_command(interaction: discord.Interaction) -> None:
     )
     embed.add_field(
         name="/parceria",
-        value=(
-            "Pode ser usado em qualquer canal do servidor. Informe `descricao` e `link` para enviar uma solicitação à staff."
-        ),
+        value="Pode ser usado em qualquer canal do servidor. Informe `descricao` e `link` para enviar uma solicitação à staff.",
+        inline=False,
+    )
+    embed.add_field(
+        name="/configurar #canal-privado",
+        value="Configura o canal privado onde a staff receberá as solicitações.",
         inline=False,
     )
     embed.add_field(
         name="&canal-parceria #canal-privado",
-        value=(
-            "Prefixo `&`. Configura o canal privado onde a staff receberá as solicitações. Apenas administrador ou Gerenciar servidor."
-        ),
+        value="Configura o canal privado onde a staff receberá as solicitações. Apenas administrador ou Gerenciar servidor.",
+        inline=False,
+    )
+    embed.add_field(
+        name="#parceria",
+        value="Define o canal atual como canal padrão de publicação das parcerias aprovadas.",
         inline=False,
     )
     embed.add_field(
         name="&armadilha",
-        value=(
-            "Usado dentro do canal que será a armadilha. Também aceita `&armadilha #canal`. Cria o cargo `Suspeito`, restringe o canal e marca automaticamente quem apresentar sinais de spam."
-        ),
+        value="Usado dentro do canal que será a armadilha. Também aceita `&armadilha #canal`. Cria o cargo `Suspeito`, restringe o canal e marca automaticamente quem apresentar sinais de spam.",
         inline=False,
     )
     embed.add_field(
@@ -793,11 +875,9 @@ async def help_command(interaction: discord.Interaction) -> None:
         value="Desativa a armadilha configurada e torna o canal visível novamente.",
         inline=False,
     )
-    embed.add_field(
-        name="/ajuda",
-        value="Mostra esta lista de comandos.",
-        inline=False,
-    )
+    embed.add_field(name="/ping", value="Verifica se o bot está online.", inline=False)
+    embed.add_field(name="/sobre", value="Mostra informações do bot.", inline=False)
+    embed.add_field(name="/servidor", value="Mostra informações básicas do servidor.", inline=False)
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
@@ -821,14 +901,10 @@ async def configure_trap(
         await context.reply("Não consegui verificar minhas permissões neste servidor.")
         return
     if not bot_member.guild_permissions.manage_channels:
-        await context.reply(
-            "Eu preciso da permissão **Gerenciar canais** para configurar a armadilha."
-        )
+        await context.reply("Eu preciso da permissão **Gerenciar canais** para configurar a armadilha.")
         return
     if not bot_member.guild_permissions.manage_roles:
-        await context.reply(
-            "Eu preciso da permissão **Gerenciar cargos** para atribuir o cargo Suspeito."
-        )
+        await context.reply("Eu preciso da permissão **Gerenciar cargos** para atribuir o cargo Suspeito.")
         return
 
     role = discord.utils.get(context.guild.roles, name=TRAP_ROLE_NAME)
@@ -847,15 +923,11 @@ async def configure_trap(
             )
     except (discord.Forbidden, discord.HTTPException):
         logger.exception("Não foi possível criar o cargo Suspeito.")
-        await context.reply(
-            "Não consegui criar o cargo `Suspeito`. Verifique a permissão **Gerenciar cargos**."
-        )
+        await context.reply("Não consegui criar o cargo `Suspeito`. Verifique a permissão **Gerenciar cargos**.")
         return
 
     if role >= bot_member.top_role:
-        await context.reply(
-            "Coloque o cargo `Suspeito` abaixo do meu maior cargo na lista de cargos do servidor."
-        )
+        await context.reply("Coloque o cargo `Suspeito` abaixo do meu maior cargo na lista de cargos do servidor.")
         return
 
     try:
@@ -887,9 +959,7 @@ async def configure_trap(
             await trap_channel.edit(topic=topic[:1024])
     except (discord.Forbidden, discord.HTTPException):
         logger.exception("Não foi possível configurar o canal armadilha.")
-        await context.reply(
-            "Não consegui configurar esse canal. Verifique se tenho **Gerenciar canais** e se meu maior cargo está acima do cargo `Suspeito`."
-        )
+        await context.reply("Não consegui configurar esse canal. Verifique se tenho **Gerenciar canais** e se meu maior cargo está acima do cargo `Suspeito`.")
         return
 
     bot.database.set_trap_config(context.guild.id, trap_channel.id, role.id)
@@ -915,16 +985,12 @@ async def disable_trap(
 
     trap_channel = canal or context.guild.get_channel(trap_config["channel_id"])
     if not isinstance(trap_channel, discord.TextChannel):
-        await context.reply(
-            "O canal da armadilha não está disponível. Remova a configuração manualmente ou escolha o canal correto."
-        )
+        await context.reply("O canal da armadilha não está disponível. Remova a configuração manualmente ou escolha o canal correto.")
         return
 
     bot_member = context.guild.me
     if bot_member is None or not bot_member.guild_permissions.manage_channels:
-        await context.reply(
-            "Eu preciso da permissão **Gerenciar canais** para desativar a armadilha."
-        )
+        await context.reply("Eu preciso da permissão **Gerenciar canais** para desativar a armadilha.")
         return
 
     role = context.guild.get_role(trap_config["role_id"])
@@ -947,9 +1013,7 @@ async def disable_trap(
         await trap_channel.edit(topic=topic or None)
     except (discord.Forbidden, discord.HTTPException):
         logger.exception("Não foi possível desativar a armadilha.")
-        await context.reply(
-            "Não consegui restaurar as permissões desse canal. Verifique **Gerenciar canais**."
-        )
+        await context.reply("Não consegui restaurar as permissões desse canal. Verifique **Gerenciar canais**.")
         return
 
     bot.database.clear_trap_config(context.guild.id)
@@ -969,14 +1033,10 @@ async def set_partnership_channel(
     if context.guild.default_role in channel.overwrites:
         everyone_permissions = channel.overwrites_for(context.guild.default_role)
         if everyone_permissions.view_channel is not False:
-            await context.reply(
-                "O canal precisa ser privado: negue **Ver canal** para o cargo @everyone."
-            )
+            await context.reply("O canal precisa ser privado: negue **Ver canal** para o cargo @everyone.")
             return
     elif channel.permissions_for(context.guild.default_role).view_channel:
-        await context.reply(
-            "O canal precisa ser privado: negue **Ver canal** para o cargo @everyone."
-        )
+        await context.reply("O canal precisa ser privado: negue **Ver canal** para o cargo @everyone.")
         return
 
     bot_member = context.guild.me
@@ -987,9 +1047,7 @@ async def set_partnership_channel(
             and bot_permissions.send_messages
             and bot_permissions.embed_links
         ):
-            await context.reply(
-                "Eu preciso de **Ver canal**, **Enviar mensagens** e **Inserir links** nesse canal."
-            )
+            await context.reply("Eu preciso de **Ver canal**, **Enviar mensagens** e **Inserir links** nesse canal.")
             return
 
     bot.database.set_approval_channel(context.guild.id, channel.id)
@@ -1006,9 +1064,7 @@ async def on_command_error(
     if isinstance(error, commands.CommandNotFound):
         return
     if isinstance(error, commands.MissingPermissions):
-        await context.reply(
-            "Apenas a staff com permissão de gerenciar o servidor pode configurar esse canal."
-        )
+        await context.reply("Apenas a staff com permissão de gerenciar o servidor pode configurar esse canal.")
         return
     if isinstance(error, commands.MissingRequiredArgument):
         command_name = context.command.name if context.command else ""
