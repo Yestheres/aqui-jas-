@@ -2,12 +2,9 @@ import sqlite3
 from pathlib import Path
 
 import discord
+from discord import app_commands
 from discord.ext import commands
 
-
-# ============================================================
-# BANCO
-# ============================================================
 
 DATA_DIR = Path("data")
 DB_PATH = DATA_DIR / "aqui_jas.sqlite3"
@@ -26,7 +23,6 @@ def init_database() -> None:
             )
             """
         )
-
         conn.commit()
 
 
@@ -34,6 +30,8 @@ def set_staff_channel(
     guild_id: int,
     channel_id: int,
 ) -> None:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute(
             """
@@ -48,13 +46,8 @@ def set_staff_channel(
             """,
             (guild_id, channel_id),
         )
-
         conn.commit()
 
-
-# ============================================================
-# PERMISSÃO
-# ============================================================
 
 def can_configure(member: discord.Member) -> bool:
     return (
@@ -64,99 +57,90 @@ def can_configure(member: discord.Member) -> bool:
     )
 
 
-# ============================================================
-# COG
-# ============================================================
-
 class Configuracao(commands.Cog):
+
     def __init__(
         self,
         bot: commands.Bot,
     ) -> None:
         self.bot = bot
-
         init_database()
 
-    # ========================================================
-    # &canal-parceria
-    # ========================================================
-
-    @commands.command(
-        name="canal-parceria",
+    @app_commands.command(
+        name="configurar",
+        description="Configura o canal privado da staff.",
     )
-    async def canal_parceria(
+    @app_commands.describe(
+        canal="Canal privado onde a staff receberá as solicitações."
+    )
+    @app_commands.default_permissions(
+        manage_guild=True
+    )
+    async def configurar(
         self,
-        ctx: commands.Context,
+        interaction: discord.Interaction,
         canal: discord.TextChannel,
     ) -> None:
-        if ctx.guild is None:
-            return
 
-        if not isinstance(ctx.author, discord.Member):
-            return
-
-        if not can_configure(ctx.author):
-            await ctx.send(
-                "❌ Você precisa ser dono do servidor, "
-                "Administrador ou ter **Gerenciar Servidor**.",
-                delete_after=5,
+        if interaction.guild is None:
+            await interaction.response.send_message(
+                "❌ Esse comando só funciona em um servidor.",
+                ephemeral=True,
             )
             return
 
-        # ----------------------------------------------------
-        # Verifica se o canal é privado para @everyone
-        # ----------------------------------------------------
+        if not isinstance(
+            interaction.user,
+            discord.Member,
+        ):
+            await interaction.response.send_message(
+                "❌ Não foi possível verificar suas permissões.",
+                ephemeral=True,
+            )
+            return
+
+        if not can_configure(
+            interaction.user
+        ):
+            await interaction.response.send_message(
+                "❌ Você precisa ser dono do servidor, "
+                "Administrador ou ter **Gerenciar Servidor**.",
+                ephemeral=True,
+            )
+            return
 
         everyone_overwrite = canal.overwrites_for(
-            ctx.guild.default_role
+            interaction.guild.default_role
         )
 
         if everyone_overwrite.view_channel is not False:
-            await ctx.send(
-                "❌ O canal precisa ser **privado**. "
-                "O @everyone não pode ter acesso a ele.",
-                delete_after=5,
+            await interaction.response.send_message(
+                "❌ O canal precisa ser **privado**.\n\n"
+                "O cargo `@everyone` não pode visualizar esse canal.",
+                ephemeral=True,
             )
             return
-
-        # ----------------------------------------------------
-        # Salva configuração
-        # ----------------------------------------------------
 
         try:
             set_staff_channel(
-                ctx.guild.id,
+                interaction.guild.id,
                 canal.id,
             )
+
         except sqlite3.Error:
-            await ctx.send(
+            await interaction.response.send_message(
                 "❌ Não consegui salvar a configuração.",
-                delete_after=5,
+                ephemeral=True,
             )
             return
 
-        # ----------------------------------------------------
-        # Apaga comando usado
-        # ----------------------------------------------------
-
-        try:
-            await ctx.message.delete()
-        except discord.HTTPException:
-            pass
-
-        # ----------------------------------------------------
-        # Confirmação
-        # ----------------------------------------------------
-
-        await ctx.send(
-            f"✅ O canal da staff foi definido como {canal.mention}.",
-            delete_after=5,
+        await interaction.response.send_message(
+            f"✅ Canal da staff configurado para {canal.mention}.\n\n"
+            "As solicitações feitas com `/parceria` "
+            "serão enviadas para esse canal.",
+            ephemeral=True,
         )
 
-
-# ============================================================
-# SETUP DO COG
-# ============================================================
 
 async def setup(
     bot: commands.Bot,
