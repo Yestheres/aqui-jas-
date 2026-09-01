@@ -283,6 +283,10 @@ class Database:
                 WHERE guild_id = ?
                   AND requester_id = ?
                   AND status IN ('pending', 'publishing')
+                  AND (
+                      status = 'publishing'
+                      OR approval_message_id IS NOT NULL
+                  )
                 LIMIT 1
                 """,
                 (str(guild_id), str(requester_id)),
@@ -317,6 +321,10 @@ class Database:
                 WHERE guild_id = ?
                   AND requester_id = ?
                   AND status IN ('pending', 'publishing')
+                  AND (
+                      status = 'publishing'
+                      OR approval_message_id IS NOT NULL
+                  )
                 ORDER BY id ASC
                 LIMIT 1
                 """,
