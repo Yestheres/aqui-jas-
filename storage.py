@@ -13,11 +13,26 @@ class Database:
     def __init__(self, path: Path = DATABASE_PATH) -> None:
         self.path = path
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._connections: set[sqlite3.Connection] = set()
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path, timeout=10)
         connection.row_factory = sqlite3.Row
+        self._connections.add(connection)
         return connection
+
+    def close(self) -> None:
+        for connection in list(self._connections):
+            try:
+                connection.close()
+            finally:
+                self._connections.discard(connection)
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except Exception:
+            pass
 
     @staticmethod
     def _columns(connection: sqlite3.Connection, table: str) -> set[str]:
@@ -263,6 +278,27 @@ class Database:
                 (str(guild_id),),
             )
 
+    def clear_stale_pending_requests_for_user(self, guild_id: int, requester_id: int) -> None:
+        """Release stale active requests left behind by interrupted or incomplete reviews."""
+        with self._connect() as connection:
+            connection.execute(
+                """
+                UPDATE partnership_requests
+                SET status = 'rejected',
+                    awaiting_channel = 0,
+                    reviewed_by = COALESCE(reviewed_by, 'system-stale-cleanup')
+                WHERE guild_id = ?
+                  AND requester_id = ?
+                  AND status IN ('pending', 'publishing')
+                  AND (
+                      approval_message_id IS NULL
+                      OR TRIM(CAST(approval_message_id AS TEXT)) = ''
+                      OR datetime(created_at) <= datetime('now', '-30 days')
+                  )
+                """,
+                (str(guild_id), str(requester_id)),
+            )
+
     def create_request(
         self,
         guild_id: int,
@@ -273,6 +309,8 @@ class Database:
         # BEGIN IMMEDIATE serializes the check + insert. This closes the race
         # where two nearly simultaneous /parceria interactions both saw no
         # pending request and then both inserted one.
+        self.clear_stale_pending_requests_for_user(guild_id, requester_id)
+
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
 

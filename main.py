@@ -18,7 +18,28 @@ from discord import app_commands
 from discord.ext import commands
 from dotenv import load_dotenv
 
+from services.ai import (
+    fallback_ai_description as fallback_ai_description_service,
+    generate_ai_description as generate_ai_description_service,
+)
+from services.invites import (
+    discord_invite_code as discord_invite_code_service,
+    is_valid_link as is_valid_link_service,
+)
+from services.partnership import (
+    partnership_embed as partnership_embed_service,
+    partnership_embed_color as partnership_embed_color_service,
+    published_partnership_embed as published_partnership_embed_service,
+    published_partnership_view as published_partnership_view_service,
+    status_label as status_label_service,
+)
 from storage import Database
+from views.partnership import (
+    PartnershipAIModal as PartnershipAIModalView,
+    PartnershipLinkModal as PartnershipLinkModalView,
+    PartnershipManualModal as PartnershipManualModalView,
+    PartnershipSetupView as PartnershipSetupViewView,
+)
 
 load_dotenv(Path(__file__).resolve().parent / ".env")
 
@@ -34,8 +55,6 @@ if not TOKEN:
 
 MAX_DESCRIPTION_LENGTH = 8000
 MAX_LINK_LENGTH = 2000
-TRAP_ROLE_NAME = "Suspeito"
-TRAP_TOPIC_MARKER = "[ARMADILHA] Acesso restrito ao cargo Suspeito."
 SPAM_WINDOW_SECONDS = 8
 SPAM_MESSAGE_LIMIT = 6
 REPEAT_WINDOW_SECONDS = 30
@@ -81,25 +100,11 @@ def normalize_text(content: str) -> str:
 
 
 def discord_invite_code(link: str) -> str | None:
-    parsed = urlparse(link)
-    if parsed.scheme not in {"http", "https"}:
-        return None
-
-    hostname = (parsed.hostname or "").lower()
-    parts = [segment for segment in parsed.path.split("/") if segment]
-
-    if hostname in {"discord.gg", "discord.me", "discord.li"}:
-        return parts[0] if parts else None
-
-    if hostname in {"discord.com", "www.discord.com", "discordapp.com", "www.discordapp.com"}:
-        if len(parts) >= 2 and parts[0].lower() == "invite":
-            return parts[1]
-
-    return None
+    return discord_invite_code_service(link)
 
 
 def is_valid_link(link: str) -> bool:
-    return discord_invite_code(link) is not None
+    return is_valid_link_service(link)
 
 
 async def fetch_invite_preview(bot: "PartnershipBot", link: str) -> tuple[str, str | None] | None:
@@ -130,117 +135,27 @@ async def fetch_invite_preview(bot: "PartnershipBot", link: str) -> tuple[str, s
 
 
 def fallback_ai_description(server_name: str, summary: str, focus: str = "comunidade") -> str:
-    base_summary = summary.strip() or "focamos em criar uma comunidade ativa e acolhedora."
-    return (
-        f"Olá! Somos {server_name} e estamos em busca de parcerias que fortaleçam nossa comunidade e tragam valor para ambos os lados. "
-        f"{base_summary} Nosso foco está em {focus}, com boa convivência, troca de experiências e crescimento mútuo. "
-        "Estamos abertos a colaborações, eventos, suporte à comunidade e oportunidades de alcance junto à nossa base."
-    )
+    return fallback_ai_description_service(server_name, summary, focus)
 
 
 def generate_ai_description(server_name: str, summary: str, focus: str = "comunidade") -> str:
-    cleaned_name = (server_name or "nosso servidor").strip()
-    cleaned_summary = (summary or "").strip()
-    cleaned_focus = (focus or "comunidade").strip()
-
-    if not cleaned_name and not cleaned_summary:
-        return "Descrição não disponível. Informe o nome do servidor e o resumo da parceria."
-
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        return fallback_ai_description(cleaned_name or "nosso servidor", cleaned_summary, cleaned_focus)
-
-    model = os.getenv("OPENAI_MODEL", "glm-4.5-flash")
-    base_url = os.getenv("OPENAI_BASE_URL", "https://openrouter.ai/api/v1")
-    url = f"{base_url.rstrip('/')}/chat/completions"
-    payload = {
-        "model": model,
-        "messages": [
-            {
-                "role": "system",
-                "content": (
-                    "Você é uma IA especializada em melhorar descrições de servidores Discord. "
-                    "Não invente fatos que não foram informados. Apenas embeleze a descrição, use emojis de forma natural e mantenha a proposta fiel ao que foi dito. "
-                    "Responda em português, sem listas longas, sem mentir e sem mencionar que você é IA."
-                ),
-            },
-            {
-                "role": "user",
-                "content": (
-                    f"Melhore a descrição de parceria do servidor {cleaned_name}. "
-                    f"Contexto: {cleaned_summary or 'servidor focado em comunidade, eventos e troca de conhecimento'}. "
-                    f"Foco principal: {cleaned_focus}. "
-                    "Deixe o texto mais bonito, acolhedor e persuasivo, mantendo a honestidade e adicionando emojis sem exagero."
-                ),
-            },
-        ],
-        "temperature": 0.7,
-    }
-
-    request = Request(
-        url,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}",
-        },
-        method="POST",
-    )
-
-    try:
-        with urlopen(request, timeout=20) as response:
-            payload_response = json.loads(response.read().decode("utf-8"))
-            content = payload_response["choices"][0]["message"]["content"].strip()
-            if content:
-                return content
-    except (HTTPError, URLError, KeyError, ValueError, TimeoutError) as exc:
-        logger.warning("Falha ao gerar descrição com IA: %s", exc)
-
-    return fallback_ai_description(cleaned_name or "nosso servidor", cleaned_summary, cleaned_focus)
+    return generate_ai_description_service(server_name, summary, focus)
 
 
 def status_label(status: str) -> str:
-    return PARTNERSHIP_STATUS_LABELS.get(status, status.title())
+    return status_label_service(status)
 
 
 def partnership_embed(request: dict[str, Any]) -> discord.Embed:
-    custom_color = request.get("color")
-    color = partnership_embed_color(custom_color) if custom_color else PARTNERSHIP_STATUS_COLORS.get(request["status"], discord.Color.blurple())
-    embed = discord.Embed(
-        title="Solicitação de parceria",
-        description=request["description"],
-        color=color,
-    )
-    embed.add_field(name="Solicitante", value=f"<@{request['requester_id']}>", inline=True)
-    embed.add_field(name="Status", value=status_label(request["status"]), inline=True)
-    embed.add_field(name="Link", value=f"[Abrir link]({request['link']})", inline=False)
-
-    if request.get("publication_channel_id"):
-        embed.add_field(
-            name="Canal de publicação",
-            value=f"<#{request['publication_channel_id']}>",
-            inline=False,
-        )
-
-    embed.set_footer(text=f"Solicitação #{request['id']}")
-    return embed
+    return partnership_embed_service(request)
 
 
 def published_partnership_embed(request: dict[str, Any], server_name: str | None, icon_url: str | None) -> discord.Embed:
-    embed = discord.Embed(
-        title=server_name,
-        description=request["description"],
-        color=partnership_embed_color(request.get("color")),
-    )
-    if icon_url:
-        embed.set_thumbnail(url=icon_url)
-    return embed
+    return published_partnership_embed_service(request, server_name, icon_url)
 
 
 def published_partnership_view(link: str) -> discord.ui.View:
-    view = discord.ui.View()
-    view.add_item(discord.ui.Button(label="Entrar no servidor", style=discord.ButtonStyle.link, url=link))
-    return view
+    return published_partnership_view_service(link)
 
 
 def get_partnership_form_state(guild_id: int, user_id: int) -> dict[str, Any]:
@@ -255,188 +170,31 @@ def get_partnership_form_state(guild_id: int, user_id: int) -> dict[str, Any]:
 
 
 def partnership_embed_color(color_name: str | None) -> discord.Color:
-    return PARTNERSHIP_EMBED_COLORS.get((color_name or "azul").lower(), discord.Color.blurple())
+    return partnership_embed_color_service(color_name)
 
 
-class PartnershipManualModal(discord.ui.Modal, title="Descrição manual da parceria"):
-    def __init__(self, guild_id: int, user_id: int) -> None:
-        super().__init__()
-        self.guild_id = guild_id
-        self.user_id = user_id
-        current = get_partnership_form_state(guild_id, user_id).get("description", "")
-        self.description = discord.ui.TextInput(
-            label="Descrição da parceria",
-            style=discord.TextStyle.paragraph,
-            required=True,
-            placeholder="Descreva o seu servidor, proposta e o que torna a parceria interessante.",
-            default=current,
-            min_length=20,
-            max_length=MAX_DESCRIPTION_LENGTH,
-        )
-        self.add_item(self.description)
-
-    async def on_submit(self, interaction: discord.Interaction) -> None:
-        state = get_partnership_form_state(self.guild_id, self.user_id)
-        state["description"] = self.description.value.strip()
-        view = PartnershipSetupView(interaction.client, self.guild_id, self.user_id)
-        await interaction.response.send_message(
-            "✅ Descrição manual salva. Revise a sua proposta e envie quando estiver pronta.",
-            embed=view.build_embed(),
-            view=view,
-            ephemeral=True,
-        )
+class PartnershipManualModal(PartnershipManualModalView):
+    def __init__(self, guild_id: int, user_id: int, state: dict[str, str] | None = None) -> None:
+        state = state or get_partnership_form_state(guild_id, user_id)
+        super().__init__(guild_id, user_id, state)
 
 
-class PartnershipLinkModal(discord.ui.Modal, title="Link do convite"):
-    def __init__(self, guild_id: int, user_id: int) -> None:
-        super().__init__()
-        self.guild_id = guild_id
-        self.user_id = user_id
-        current = get_partnership_form_state(guild_id, user_id).get("link", "")
-        self.link = discord.ui.TextInput(
-            label="Convite permanente do Discord",
-            required=True,
-            placeholder="discord.gg/seu-servidor ou https://discord.gg/seu-servidor",
-            default=current,
-            min_length=5,
-            max_length=MAX_LINK_LENGTH,
-        )
-        self.add_item(self.link)
-
-    async def on_submit(self, interaction: discord.Interaction) -> None:
-        state = get_partnership_form_state(self.guild_id, self.user_id)
-        state["link"] = self.link.value.strip()
-        view = PartnershipSetupView(interaction.client, self.guild_id, self.user_id)
-        await interaction.response.send_message(
-            "✅ Link salvo. Você pode revisar a proposta e enviar quando quiser.",
-            embed=view.build_embed(),
-            view=view,
-            ephemeral=True,
-        )
+class PartnershipLinkModal(PartnershipLinkModalView):
+    def __init__(self, guild_id: int, user_id: int, state: dict[str, str] | None = None) -> None:
+        state = state or get_partnership_form_state(guild_id, user_id)
+        super().__init__(guild_id, user_id, state)
 
 
-class PartnershipAIModal(discord.ui.Modal, title="Melhorar descrição com IA"):
-    def __init__(self, guild_id: int, user_id: int) -> None:
-        super().__init__()
-        self.guild_id = guild_id
-        self.user_id = user_id
-        self.server_name = discord.ui.TextInput(
-            label="Nome do servidor",
-            required=True,
-            placeholder="Ex.: Pixel Guild",
-            max_length=120,
-        )
-        self.summary = discord.ui.TextInput(
-            label="Resumo básico do servidor",
-            style=discord.TextStyle.paragraph,
-            required=True,
-            placeholder="Ex.: comunidade de games, eventos, amizades, discussões e atividades semanais.",
-            min_length=20,
-            max_length=500,
-        )
-        self.focus = discord.ui.TextInput(
-            label="Foco da parceria (opcional)",
-            required=False,
-            placeholder="Ex.: comunidade, eventos, educação, games",
-            max_length=80,
-        )
-        self.add_item(self.server_name)
-        self.add_item(self.summary)
-        self.add_item(self.focus)
-
-    async def on_submit(self, interaction: discord.Interaction) -> None:
-        state = get_partnership_form_state(self.guild_id, self.user_id)
-        description = generate_ai_description(
-            self.server_name.value.strip(),
-            self.summary.value.strip(),
-            (self.focus.value or "comunidade").strip(),
-        )
-        state["description"] = description
-        view = PartnershipSetupView(interaction.client, self.guild_id, self.user_id)
-        await interaction.response.send_message(
-            "✨ Descrição aprimorada pela IA foi salva na sua solicitação.",
-            embed=view.build_embed(),
-            view=view,
-            ephemeral=True,
-        )
+class PartnershipAIModal(PartnershipAIModalView):
+    def __init__(self, guild_id: int, user_id: int, state: dict[str, str] | None = None) -> None:
+        state = state or get_partnership_form_state(guild_id, user_id)
+        super().__init__(guild_id, user_id, state)
 
 
-class PartnershipSetupView(discord.ui.View):
-    def __init__(self, bot: "PartnershipBot", guild_id: int, user_id: int) -> None:
-        super().__init__(timeout=600)
-        self.bot = bot
-        self.guild_id = guild_id
-        self.user_id = user_id
-
-    def build_embed(self) -> discord.Embed:
-        state = get_partnership_form_state(self.guild_id, self.user_id)
-        embed = discord.Embed(
-            title="Solicitação de parceria",
-            description="Configure sua parceria antes de enviar para a staff.",
-            color=partnership_embed_color(state.get("color")),
-        )
-        embed.add_field(
-            name="Descrição",
-            value=(state.get("description") or "Ainda não foi preenchida.")[:1024],
-            inline=False,
-        )
-        embed.add_field(
-            name="Link do servidor",
-            value=(state.get("link") or "Ainda não foi preenchido.")[:1024],
-            inline=False,
-        )
-        embed.add_field(
-            name="Cor da embed",
-            value=(state.get("color") or "azul").title(),
-            inline=True,
-        )
-        return embed
-
-    @discord.ui.select(
-        placeholder="Escolha a cor da embed",
-        options=[
-            discord.SelectOption(label="Azul", value="azul", emoji="🔵", default=True),
-            discord.SelectOption(label="Roxo", value="roxo", emoji="🟣"),
-            discord.SelectOption(label="Verde", value="verde", emoji="🟢"),
-            discord.SelectOption(label="Amarelo", value="amarelo", emoji="🟡"),
-            discord.SelectOption(label="Vermelho", value="vermelho", emoji="🔴"),
-            discord.SelectOption(label="Rosa", value="rosa", emoji="🩷"),
-            discord.SelectOption(label="Cinza", value="cinza", emoji="⚪"),
-        ],
-        custom_id="partnership:color-select",
-    )
-    async def pick_color(
-        self,
-        interaction: discord.Interaction,
-        select: discord.ui.Select["PartnershipSetupView"],
-    ) -> None:
-        state = get_partnership_form_state(self.guild_id, self.user_id)
-        state["color"] = (select.values[0] if select.values else "azul").lower()
-        await interaction.response.edit_message(embed=self.build_embed(), view=self)
-
-    @discord.ui.button(label="Descrição manual", style=discord.ButtonStyle.primary, custom_id="partnership:manual")
-    async def manual_description(
-        self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button["PartnershipSetupView"],
-    ) -> None:
-        await interaction.response.send_modal(PartnershipManualModal(self.guild_id, self.user_id))
-
-    @discord.ui.button(label="Melhorar com IA", style=discord.ButtonStyle.success, custom_id="partnership:ai")
-    async def ai_description(
-        self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button["PartnershipSetupView"],
-    ) -> None:
-        await interaction.response.send_modal(PartnershipAIModal(self.guild_id, self.user_id))
-
-    @discord.ui.button(label="Link do convite", style=discord.ButtonStyle.secondary, custom_id="partnership:link")
-    async def link_description(
-        self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button["PartnershipSetupView"],
-    ) -> None:
-        await interaction.response.send_modal(PartnershipLinkModal(self.guild_id, self.user_id))
+class PartnershipSetupView(PartnershipSetupViewView):
+    def __init__(self, bot: "PartnershipBot", guild_id: int, user_id: int, state: dict[str, str] | None = None) -> None:
+        state = state or get_partnership_form_state(guild_id, user_id)
+        super().__init__(bot, guild_id, user_id, state)
 
     @discord.ui.button(label="Enviar solicitação", style=discord.ButtonStyle.blurple, custom_id="partnership:submit")
     async def submit_partnership(
@@ -888,6 +646,14 @@ class PartnershipBot(commands.Bot):
 
     async def setup_hook(self) -> None:
         self.database.initialize()
+
+        for extension in ("cogs.configuracao", "cogs.seguranca", "cogs.geral"):
+            try:
+                await self.load_extension(extension)
+            except Exception:
+                logger.exception("Falha ao carregar a extensão %s.", extension)
+                raise
+
         synced = await self.tree.sync()
         logger.info("Comandos slash sincronizados: %s", len(synced))
 
@@ -953,115 +719,6 @@ class PartnershipBot(commands.Bot):
 bot = PartnershipBot()
 
 
-@bot.tree.command(name="sobre", description="Mostra informações sobre o bot.")
-async def sobre(interaction: discord.Interaction) -> None:
-    embed = discord.Embed(
-        title=f"✨ {bot.user.name if bot.user else 'Bot'}",
-        description="Bot Discord leve e modular.",
-        color=discord.Color.blurple(),
-    )
-    if bot.user:
-        embed.set_thumbnail(url=bot.user.display_avatar.url)
-
-    embed.add_field(name="🏠 Servidores", value=f"`{len(bot.guilds)}`", inline=True)
-    embed.add_field(name="📦 discord.py", value=f"`{discord.__version__}`", inline=True)
-    await interaction.response.send_message(embed=embed)
-
-
-@bot.tree.command(name="servidor", description="Mostra informações básicas deste servidor.")
-async def servidor(interaction: discord.Interaction) -> None:
-    if interaction.guild is None:
-        await interaction.response.send_message("Esse comando só funciona em um servidor.", ephemeral=True)
-        return
-
-    guild = interaction.guild
-    embed = discord.Embed(title=f"🏠 {guild.name}", color=discord.Color.blurple())
-    if guild.icon:
-        embed.set_thumbnail(url=guild.icon.url)
-
-    embed.add_field(name="👥 Membros", value=f"`{guild.member_count or 'indisponível'}`", inline=True)
-    embed.add_field(name="💬 Canais", value=f"`{len(guild.channels)}`", inline=True)
-    embed.add_field(name="🎭 Cargos", value=f"`{max(0, len(guild.roles) - 1)}`", inline=True)
-    await interaction.response.send_message(embed=embed)
-
-
-@bot.tree.command(name="configurar", description="Configura o canal privado da staff.")
-@app_commands.describe(canal="Canal privado onde a staff receberá as solicitações.")
-@app_commands.default_permissions(manage_guild=True)
-async def configurar(interaction: discord.Interaction, canal: discord.TextChannel) -> None:
-    if interaction.guild is None or not isinstance(interaction.user, discord.Member):
-        await interaction.response.send_message("Esse comando só funciona em um servidor.", ephemeral=True)
-        return
-
-    permissions = interaction.user.guild_permissions
-    if interaction.user.id != interaction.guild.owner_id and not (permissions.administrator or permissions.manage_guild):
-        await interaction.response.send_message(
-            "❌ Você precisa ser dono do servidor, Administrador ou ter **Gerenciar Servidor**.",
-            ephemeral=True,
-        )
-        return
-
-    if canal.overwrites_for(interaction.guild.default_role).view_channel is not False:
-        await interaction.response.send_message(
-            "❌ O canal precisa ser **privado**: negue **Ver canal** para @everyone.",
-            ephemeral=True,
-        )
-        return
-
-    bot.database.set_approval_channel(interaction.guild.id, canal.id)
-    await interaction.response.send_message(f"✅ Canal da staff configurado para {canal.mention}.", ephemeral=True)
-
-
-@bot.tree.command(name="canal-publicacao", description="Define um canal como canal padrão de publicação de parcerias.")
-@app_commands.describe(canal="Canal do servidor que deve receber as publicações de parceria.")
-@app_commands.default_permissions(manage_guild=True)
-async def canal_publicacao(interaction: discord.Interaction, canal: discord.TextChannel) -> None:
-    if not interaction.guild:
-        await interaction.response.send_message("Esse comando só funciona em um servidor.", ephemeral=True)
-        return
-
-    bot_member = interaction.guild.me
-    if bot_member:
-        permissions = canal.permissions_for(bot_member)
-        if not (permissions.view_channel and permissions.send_messages and permissions.embed_links):
-            await interaction.response.send_message(
-                "Eu preciso de **Ver canal**, **Enviar mensagens** e **Inserir links** nesse canal.",
-                ephemeral=True,
-            )
-            return
-
-    bot.database.set_publication_channel(interaction.guild.id, canal.id)
-    await interaction.response.send_message(
-        f"✅ {canal.mention} foi definido como **canal de publicação de parcerias**.",
-        ephemeral=True,
-    )
-
-
-@bot.tree.command(name="parceria-ai", description="Gera uma descrição de parceria com IA para você usar na solicitação.")
-@app_commands.describe(
-    nome="Nome do seu servidor ou comunidade.",
-    sobre="Resumo do que o servidor faz, temáticas e proposta.",
-    foco="Foco principal da parceria, como comunidade, eventos, educação, games, etc.",
-)
-async def partnership_ai(interaction: discord.Interaction, nome: str, sobre: str, foco: str = "comunidade") -> None:
-    nome = nome.strip()
-    sobre = sobre.strip()
-    foco = foco.strip() or "comunidade"
-
-    if not nome or not sobre:
-        await interaction.response.send_message(
-            "Informe o nome do servidor e um resumo do que ele faz para gerar a descrição.",
-            ephemeral=True,
-        )
-        return
-
-    description = generate_ai_description(nome, sobre, foco)
-    await interaction.response.send_message(
-        "Descrição sugerida:\n\n" + description,
-        ephemeral=True,
-    )
-
-
 @bot.tree.command(name="parceria", description="Cria uma solicitação de parceria com embed customizável.")
 @app_commands.describe(
     descricao="Descrição da parceria (opcional se você preferir preencher no formulário).",
@@ -1089,158 +746,6 @@ async def partnership(interaction: discord.Interaction, descricao: str | None = 
         ephemeral=True,
     )
 
-
-@bot.tree.command(name="ajuda", description="Mostra os comandos disponíveis do bot.")
-async def help_command(interaction: discord.Interaction) -> None:
-    embed = discord.Embed(
-        title="Ajuda do bot",
-        description="Comandos disponíveis e como usá-los.",
-        color=discord.Color.blurple(),
-    )
-    embed.add_field(
-        name="/parceria",
-        value="Pode ser usado em qualquer canal do servidor. Informe `descricao` e `link` para enviar uma solicitação à staff.",
-        inline=False,
-    )
-    embed.add_field(name="/configurar", value="Configura o canal privado de aprovação (staff).", inline=False)
-    embed.add_field(name="/canal-publicacao", value="Define um canal específico para publicar parcerias no servidor.", inline=False)
-    embed.add_field(name="/armadilha", value="Configura o canal armadilha e marca automaticamente sinais de spam.", inline=False)
-    embed.add_field(name="/desarmadilha", value="Desativa a armadilha e restaura o canal.", inline=False)
-    await interaction.response.send_message(embed=embed)
-
-
-@bot.tree.command(name="armadilha", description="Configura um canal como armadilha anti-spam.")
-@app_commands.describe(canal="Canal de texto que será usado como armadilha. Se não informar, usa o canal atual.")
-@app_commands.default_permissions(manage_guild=True)
-async def armadilha_slash(interaction: discord.Interaction, canal: discord.TextChannel | None = None) -> None:
-    if interaction.guild is None:
-        await interaction.response.send_message("Esse comando só funciona em um servidor.", ephemeral=True)
-        return
-
-    guild = interaction.guild
-    trap_channel = canal or interaction.channel
-    if not isinstance(trap_channel, discord.TextChannel):
-        await interaction.response.send_message("Use esse comando em um canal de texto ou mencione um canal válido.", ephemeral=True)
-        return
-
-    bot_member = guild.me
-    if bot_member is None:
-        await interaction.response.send_message("Não consegui verificar minhas permissões neste servidor.", ephemeral=True)
-        return
-    if not bot_member.guild_permissions.manage_channels:
-        await interaction.response.send_message("Eu preciso da permissão **Gerenciar canais** para configurar a armadilha.", ephemeral=True)
-        return
-    if not bot_member.guild_permissions.manage_roles:
-        await interaction.response.send_message("Eu preciso da permissão **Gerenciar cargos** para atribuir o cargo Suspeito.", ephemeral=True)
-        return
-
-    role = discord.utils.get(guild.roles, name=TRAP_ROLE_NAME)
-    if role is not None and role.managed:
-        await interaction.response.send_message("O cargo Suspeito é gerenciado por uma integração e não pode ser usado.", ephemeral=True)
-        return
-
-    try:
-        if role is None:
-            role = await guild.create_role(
-                name=TRAP_ROLE_NAME,
-                mentionable=False,
-                reason="Cargo usado pela armadilha anti-spam.",
-            )
-    except (discord.Forbidden, discord.HTTPException):
-        logger.exception("Não foi possível criar o cargo Suspeito.")
-        await interaction.response.send_message("Não consegui criar o cargo Suspeito. Verifique a permissão **Gerenciar cargos**.", ephemeral=True)
-        return
-
-    if role >= bot_member.top_role:
-        await interaction.response.send_message("Coloque o cargo Suspeito abaixo do meu maior cargo na lista de cargos do servidor.", ephemeral=True)
-        return
-
-    try:
-        await trap_channel.set_permissions(
-            guild.default_role,
-            view_channel=False,
-            send_messages=False,
-            reason="Canal configurado como armadilha.",
-        )
-        await trap_channel.set_permissions(
-            role,
-            view_channel=True,
-            send_messages=True,
-            read_message_history=True,
-            reason="Acesso do cargo Suspeito ao canal armadilha.",
-        )
-        await trap_channel.set_permissions(
-            bot_member,
-            view_channel=True,
-            send_messages=True,
-            read_message_history=True,
-            embed_links=True,
-            reason="Acesso do bot ao canal armadilha.",
-        )
-
-        current_topic = trap_channel.topic or ""
-        if TRAP_TOPIC_MARKER not in current_topic:
-            await trap_channel.edit(topic=f"{TRAP_TOPIC_MARKER}\n{current_topic}".strip()[:1024])
-    except (discord.Forbidden, discord.HTTPException):
-        logger.exception("Não foi possível configurar o canal armadilha.")
-        await interaction.response.send_message("Não consegui configurar esse canal. Verifique **Gerenciar canais** e a posição do cargo Suspeito.", ephemeral=True)
-        return
-
-    bot.database.set_trap_config(guild.id, trap_channel.id, role.id)
-    await interaction.response.send_message(
-        f"Armadilha configurada em {trap_channel.mention}. Quem atingir os critérios de suspeita receberá {role.mention}.",
-        ephemeral=True,
-    )
-
-
-@bot.tree.command(name="desarmadilha", description="Desativa a armadilha anti-spam de um canal.")
-@app_commands.describe(canal="Canal da armadilha. Se não informar, usa o canal configurado no servidor.")
-@app_commands.default_permissions(manage_guild=True)
-async def desarmadilha_slash(interaction: discord.Interaction, canal: discord.TextChannel | None = None) -> None:
-    if interaction.guild is None:
-        await interaction.response.send_message("Esse comando só funciona em um servidor.", ephemeral=True)
-        return
-
-    guild = interaction.guild
-    config = bot.database.get_trap_config(guild.id)
-    if config is None:
-        await interaction.response.send_message("Não há nenhuma armadilha configurada neste servidor.", ephemeral=True)
-        return
-
-    trap_channel = canal or guild.get_channel(config["channel_id"])
-    if not isinstance(trap_channel, discord.TextChannel):
-        await interaction.response.send_message("O canal da armadilha não está disponível.", ephemeral=True)
-        return
-
-    bot_member = guild.me
-    if bot_member is None or not bot_member.guild_permissions.manage_channels:
-        await interaction.response.send_message("Eu preciso da permissão **Gerenciar canais** para desativar a armadilha.", ephemeral=True)
-        return
-
-    role = guild.get_role(config["role_id"])
-    try:
-        await trap_channel.set_permissions(
-            guild.default_role,
-            view_channel=True,
-            send_messages=True,
-            reason="Canal armadilha desativado.",
-        )
-        if role is not None:
-            await trap_channel.set_permissions(
-                role,
-                overwrite=None,
-                reason="Acesso específico da armadilha removido.",
-            )
-
-        topic = (trap_channel.topic or "").replace(TRAP_TOPIC_MARKER, "").strip()
-        await trap_channel.edit(topic=topic or None)
-    except (discord.Forbidden, discord.HTTPException):
-        logger.exception("Não foi possível desativar o canal armadilha.")
-        await interaction.response.send_message("Não consegui restaurar as permissões do canal. Verifique **Gerenciar canais**.", ephemeral=True)
-        return
-
-    bot.database.clear_trap_config(guild.id)
-    await interaction.response.send_message(f"Armadilha desativada em {trap_channel.mention}.", ephemeral=True)
 
 
 if __name__ == "__main__":
